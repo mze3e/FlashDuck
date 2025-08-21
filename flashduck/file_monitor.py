@@ -238,10 +238,14 @@ class FileMonitor:
             
             # Get data files based on format
             if self.config.file_format == "parquet":
-                data_files = list(db_path.glob("*.parquet"))
+                all_files = list(db_path.glob("*.parquet"))
+                # Filter out batch partition files to avoid feedback loop
+                data_files = [f for f in all_files if "_batch_" not in f.name and "_partition_" not in f.name]
                 file_type = "Parquet"
             else:
-                data_files = list(db_path.glob("*.json"))
+                all_files = list(db_path.glob("*.json"))
+                # Filter out batch partition files to avoid feedback loop
+                data_files = [f for f in all_files if "_batch_" not in f.name and "_partition_" not in f.name]
                 file_type = "JSON"
             
             if not data_files:
@@ -600,8 +604,9 @@ class BackgroundPartitionWriter:
         self._write_callbacks: List[Callable] = []
         self._batch_counter = 0
         
-        # Ensure DB root directory exists
-        Path(config.db_root).mkdir(parents=True, exist_ok=True)
+        # Ensure partition directory exists (separate from source files to avoid feedback loop)
+        self.partition_dir = Path(config.db_root) / "partitions"
+        self.partition_dir.mkdir(parents=True, exist_ok=True)
     
     def add_write_callback(self, callback: Callable) -> None:
         """Add callback to be called after partition writes"""
@@ -681,16 +686,15 @@ class BackgroundPartitionWriter:
                     timestamp_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S-%f")[:-3]
                     partition_filename = f"{table_name}_batch_{self._batch_counter}_{timestamp_str}.parquet"
                     
-                    # Write partition file
-                    db_path = Path(self.config.db_root)
-                    file_path = db_path / partition_filename
+                    # Write partition file to separate directory
+                    file_path = self.partition_dir / partition_filename
                     
                     if self.config.file_format == "parquet":
                         partition_df.to_parquet(file_path, compression=self.config.parquet_compression, index=False)
                     else:
                         # For JSON, still use partitioned approach
                         partition_filename = f"{table_name}_batch_{self._batch_counter}_{timestamp_str}.json"
-                        file_path = db_path / partition_filename
+                        file_path = self.partition_dir / partition_filename
                         records_dict = partition_df.to_dict('records')
                         import json
                         with open(file_path, 'w', encoding='utf-8') as f:
@@ -698,8 +702,8 @@ class BackgroundPartitionWriter:
                     
                     self.logger.info(
                         f"Batch {self._batch_counter}: Wrote partition '{partition_filename}' with {len(partition_df)} delta records "
-                        f"({comparison['stats']['added_count']} added, {comparison['stats']['modified_count']} modified, "
-                        f"{comparison['stats']['deleted_count']} deleted)"
+                        f"({comparison.get('stats', {}).get('added_count', 0)} added, {comparison.get('stats', {}).get('modified_count', 0)} modified, "
+                        f"{comparison.get('stats', {}).get('deleted_count', 0)} deleted)"
                     )
                     
                     # Update previous snapshot state for next comparison
