@@ -20,11 +20,16 @@ class CacheManager:
     
     def __init__(self, config: Config):
         self.config = config
-        self.redis_client = redis.from_url(config.redis_url, decode_responses=False)
+        self.redis_client = redis.Redis.from_url(config.redis_url, decode_responses=False)
         self.logger = logging.getLogger(__name__)
         
         # Redis keys for multiple tables
         self.tables_list_key = "flashduck:tables"
+        
+        # Legacy compatibility attributes
+        self.stream_key = f"writes:{config.table_name}"
+        self.snapshot_key = f"snapshot:{config.table_name}"
+        self.metadata_key = f"metadata:{config.table_name}"
     
     def _get_table_keys(self, table_name: str) -> tuple:
         """Get Redis keys for a specific table"""
