@@ -268,25 +268,18 @@ def render_data_explorer():
                             st.metric("Max", f"{col_stats['max']:.2f}")
                             st.metric("Std", f"{col_stats['std']:.2f}")
                         
-                        # Use Streamlit's native bar chart instead of Plotly
-                        try:
-                            hist_data = sample_df[column].value_counts().head(20)
-                            st.bar_chart(hist_data)
-                        except:
-                            st.write(f"Data type: {sample_df[column].dtype}")
+                        # Simple display instead of charts to avoid JS issues
+                        st.write(f"Data type: {sample_df[column].dtype}")
+                        st.write(f"Sample values: {list(sample_df[column].dropna().head(3))}")
                         
                     elif len(sample_df[column].unique()) < 20:
                         # Categorical column with few values
                         value_counts = sample_df[column].value_counts()
                         st.write(f"Unique values: {len(sample_df[column].unique())}")
                         
-                        # Use Streamlit's native bar chart
-                        try:
-                            st.bar_chart(value_counts)
-                        except:
-                            # Fallback to simple display
-                            for val, count in value_counts.items():
-                                st.write(f"• {val}: {count}")
+                        # Simple text display
+                        for val, count in value_counts.head(10).items():
+                            st.write(f"• {val}: {count}")
                     
                     else:
                         st.write(f"Data type: {sample_df[column].dtype}")
