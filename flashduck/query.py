@@ -143,13 +143,54 @@ class QueryEngine:
                     # Get primary key for this table
                     primary_key = self.config.table_primary_keys.get(table_name, 'id')
                     print(f"Using primary key '{primary_key}' for table '{table_name}'")
+                    
                     # Separate partition files from legacy files
-                    print(f"Partition files for {table_name}: {files}")
-                    if files:
-                        # If we have partition files, use them with ranking (they have _modified_time)
-                        partition_pattern = f"[{','.join(repr(f) for f in files)}]"
+                    partition_files = [f for f in files if "_partition_" in f]
+                    legacy_files = [f for f in files if "_partition_" not in f]
+                    
+                    print(f"Partition files ({len(partition_files)}): {partition_files}")
+                    print(f"Legacy files ({len(legacy_files)}): {legacy_files}")
+                    
+                    if partition_files and legacy_files:
+                        # Both partition and legacy files - need to combine intelligently
+                        partition_pattern = f"[{','.join(repr(f) for f in partition_files)}]"
+                        legacy_pattern = f"[{','.join(repr(f) for f in legacy_files)}]"
                         
-                        # Create ranked view with deduplication using only partition files
+                        combined_sql = f"""
+                        CREATE OR REPLACE VIEW {table_name} AS
+                        WITH partition_data AS (
+                            SELECT * FROM (
+                                SELECT *,
+                                       ROW_NUMBER() OVER (PARTITION BY {primary_key} ORDER BY _modified_time DESC) as rn
+                                FROM read_parquet({partition_pattern}, union_by_name=true)
+                            ) ranked
+                            WHERE rn = 1
+                        ),
+                        legacy_data AS (
+                            SELECT *, 0.0 as _modified_time, 1 as rn
+                            FROM read_parquet({legacy_pattern}, union_by_name=true)
+                            WHERE {primary_key} NOT IN (SELECT {primary_key} FROM partition_data)
+                        )
+                        SELECT * FROM partition_data
+                        UNION ALL
+                        SELECT * FROM legacy_data
+                        """
+                        
+                        try:
+                            conn.execute(combined_sql)
+                            self.logger.debug(f"Created combined ranked view for table '{table_name}' from {len(partition_files)} partition files and {len(legacy_files)} legacy files")
+                            print(f"✅ Created combined ranked view for '{table_name}': {len(partition_files)} partition + {len(legacy_files)} legacy files")
+                        except Exception as e:
+                            # Fallback: simple union of all files
+                            file_pattern = f"[{','.join(repr(f) for f in files)}]"
+                            fallback_sql = f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_parquet({file_pattern}, union_by_name=true)"
+                            conn.execute(fallback_sql)
+                            print(f"⚠️ Fallback: simple union for '{table_name}' (ranking failed: {e})")
+                    
+                    elif partition_files:
+                        # Only partition files - use ranking if _modified_time exists
+                        partition_pattern = f"[{','.join(repr(f) for f in partition_files)}]"
+                        
                         ranked_sql = f"""
                         CREATE OR REPLACE VIEW {table_name} AS
                         SELECT * FROM (
@@ -159,17 +200,22 @@ class QueryEngine:
                         ) ranked
                         WHERE rn = 1
                         """
+                        
                         try:
                             conn.execute(ranked_sql)
-                            self.logger.debug(f"Created combined ranked view for table '{table_name}' from {len(partition_files)} partition files and {len(legacy_files)} legacy files")
-                            print(f"Created ranked view for table '{table_name}' from {len(partition_files)} partition files")
+                            print(f"✅ Created ranked view for '{table_name}' from {len(partition_files)} partition files")
                         except Exception as e:
-                            # Fallback to simple read of all files
-                            file_pattern = f"[{','.join(repr(f) for f in files)}]"
-                            fallback_sql = f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_parquet({file_pattern}, union_by_name=true)"
+                            # Fallback: simple read
+                            fallback_sql = f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_parquet({partition_pattern}, union_by_name=true)"
                             conn.execute(fallback_sql)
-                            self.logger.debug(f"Created simple view for table '{table_name}' from {len(files)} files (ranking failed: {e})")
-                            print(f"Warning: Failed to create ranked view for table '{table_name}': {e}")
+                            print(f"⚠️ Fallback: simple read for '{table_name}' (ranking failed: {e})")
+                    
+                    elif legacy_files:
+                        # Only legacy files - simple read (no deduplication possible)
+                        legacy_pattern = f"[{','.join(repr(f) for f in legacy_files)}]"
+                        legacy_sql = f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_parquet({legacy_pattern}, union_by_name=true)"
+                        conn.execute(legacy_sql)
+                        print(f"📋 Created legacy view for '{table_name}' from {len(legacy_files)} files (no ranking)")
                 # Execute the user's query
                 result = conn.execute(sql).fetchdf()
                 
