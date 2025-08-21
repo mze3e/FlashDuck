@@ -715,7 +715,7 @@ def render_write_operations():
                                         changes_df = pd.concat(changed_rows, ignore_index=True)
                                     else:
                                         st.info("ℹ️ No changes detected - nothing to save")
-                                        continue
+                                        return
                                 else:
                                     # Fallback: if primary key comparison fails, save all data
                                     st.warning("⚠️ Cannot determine changes, saving all data")
