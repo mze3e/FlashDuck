@@ -81,6 +81,118 @@ class QueryEngine:
                 "sql": sql
             }
     
+    def execute_sql_direct_parquet(self, sql: str, db_root: str) -> Dict[str, Any]:
+        """Execute SQL query directly against parquet files with ranked deduplication"""
+        try:
+            import time
+            from pathlib import Path
+            
+            start_time = time.time()
+            
+            # Validate SQL is read-only
+            validate_sql_readonly(sql)
+            
+            db_path = Path(db_root)
+            if not db_path.exists():
+                return {
+                    "success": False,
+                    "error": f"Database directory does not exist: {db_root}",
+                    "rows": 0,
+                    "columns": [],
+                    "data": [],
+                    "sql": sql
+                }
+            
+            conn = duckdb.connect()
+            
+            try:
+                # Group parquet files by table name and create ranked views
+                parquet_files = list(db_path.glob("*.parquet"))
+                table_files = {}
+                
+                for file_path in parquet_files:
+                    filename = file_path.stem
+                    
+                    # Extract table name from partition filename or use as is
+                    if "_partition_" in filename:
+                        table_name = filename.split("_partition_")[0]
+                    else:
+                        table_name = filename
+                    
+                    if table_name not in table_files:
+                        table_files[table_name] = []
+                    table_files[table_name].append(str(file_path))
+                
+                # For each table, create a view with ranked deduplication
+                for table_name, files in table_files.items():
+                    # Create file pattern for DuckDB
+                    file_pattern = f"[{','.join(repr(f) for f in files)}]"
+                    
+                    # Get primary key for this table
+                    primary_key = self.config.table_primary_keys.get(table_name, 'id')
+                    
+                    # Create ranked view with deduplication
+                    ranked_sql = f"""
+                    CREATE OR REPLACE VIEW {table_name} AS
+                    SELECT * FROM (
+                        SELECT *,
+                               ROW_NUMBER() OVER (PARTITION BY {primary_key} ORDER BY _modified_time DESC) as rn
+                        FROM read_parquet({file_pattern})
+                    ) ranked
+                    WHERE rn = 1
+                    """
+                    
+                    try:
+                        conn.execute(ranked_sql)
+                        self.logger.debug(f"Created ranked view for table '{table_name}' from {len(files)} files")
+                    except Exception as e:
+                        # If ranking fails (e.g., no primary key column), use simple union
+                        union_sql = f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_parquet({file_pattern})"
+                        conn.execute(union_sql)
+                        self.logger.debug(f"Created simple view for table '{table_name}' from {len(files)} files")
+                
+                # Execute the user's query
+                result = conn.execute(sql).fetchdf()
+                
+                query_time = time.time() - start_time
+                
+                # Format output based on configuration
+                if self.config.sql_output_format == "json":
+                    data = result.to_dict('records')
+                elif self.config.sql_output_format == "csv":
+                    data = result.to_csv(index=False)
+                elif self.config.sql_output_format == "arrow":
+                    data = dataframe_to_arrow_ipc(result).hex()  # Hex encode for JSON serialization
+                else:
+                    data = result.to_dict('records')  # Default to JSON
+                
+                return {
+                    "success": True,
+                    "rows": len(result),
+                    "columns": list(result.columns),
+                    "data": data,
+                    "sql": sql,
+                    "format": self.config.sql_output_format,
+                    "query_time": query_time,
+                    "source": "direct_parquet",
+                    "available_tables": list(table_files.keys())
+                }
+                
+            finally:
+                conn.close()
+                
+        except Exception as e:
+            self.logger.error(f"Direct parquet SQL execution failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "rows": 0,
+                "columns": [],
+                "data": [],
+                "sql": sql,
+                "source": "direct_parquet"
+            }
+    
     def get_table_info(self) -> Dict[str, Any]:
         """Get information about all cached tables"""
         try:

@@ -342,13 +342,23 @@ def render_data_explorer():
 
 
 def render_sql_interface():
-    """Render SQL query interface"""
-    st.subheader("🗃️ SQL Query Interface")
+    """Render SQL query interface with performance comparison"""
+    st.subheader("🗃️ SQL Interface with Performance Comparison")
     
     engine = get_engine()
     if not engine:
         st.error("FlashDuck engine not available")
         return
+    
+    st.info("💡 Compare performance between Redis cache queries and direct Parquet file queries with partitioned deduplication.")
+    
+    # Query mode selection
+    query_mode = st.radio(
+        "Select query execution mode:",
+        ["🏁 Performance Comparison", "🗄️ Redis Cache Only", "📁 Direct Parquet Only"],
+        key="sql_query_mode",
+        horizontal=True
+    )
     
     # Query input
     default_query = "SELECT * FROM users LIMIT 10"
@@ -356,26 +366,57 @@ def render_sql_interface():
     sql_query = st.text_area(
         "Enter SQL Query:",
         value=st.session_state.get('sql_input', default_query),
-        height=100,
-        help="Enter a read-only SQL query. Write operations are not allowed.",
+        height=150,
+        help="Enter a read-only SQL query. Only SELECT statements are allowed.",
         key="sql_input"
     )
     
-    col1, col2, col3 = st.columns([1, 1, 2])
+    # Pre-filled examples
+    example_queries = [
+        "SELECT * FROM users LIMIT 10",
+        "SELECT name, age FROM users WHERE age > 25",
+        "SELECT category, COUNT(*) as count FROM products GROUP BY category",
+        "SELECT u.name, p.name as product_name, o.total FROM users u JOIN orders o ON u.id = o.user_id JOIN products p ON o.product_id = p.id",
+        "SELECT status, COUNT(*) as order_count, AVG(total) as avg_total FROM orders GROUP BY status",
+        "SELECT * FROM products WHERE in_stock = true ORDER BY rating DESC"
+    ]
+    
+    selected_example = st.selectbox(
+        "Or choose an example query:",
+        ["Custom Query"] + example_queries,
+        key="sql_example_selector"
+    )
+    
+    if selected_example != "Custom Query":
+        st.session_state.sql_input = selected_example
+        st.rerun()
+    
+    # Query execution buttons
+    col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
-        execute_button = st.button("▶️ Execute Query", use_container_width=True)
+        execute_button = st.button("🚀 Execute Query", use_container_width=True)
     
     with col2:
-        validate_button = st.button("✅ Validate Query", use_container_width=True)
+        validate_button = st.button("✅ Validate", use_container_width=True)
+    
+    with col3:
+        clear_button = st.button("🧹 Clear", use_container_width=True)
+    
+    if clear_button:
+        st.session_state.sql_input = ""
+        st.rerun()
     
     # Validate query
     if validate_button:
-        validation = engine.validate_query(sql_query)
-        if validation['valid']:
-            st.success("✅ Query is valid!")
-        else:
-            st.error(f"❌ Query validation failed: {validation['error']}")
+        try:
+            validation = engine.validate_query(sql_query)
+            if validation['valid']:
+                st.success("✅ Query is valid!")
+            else:
+                st.error(f"❌ Query validation failed: {validation['error']}")
+        except Exception as e:
+            st.error(f"❌ Validation error: {e}")
     
     # Execute query
     if execute_button:
@@ -383,61 +424,147 @@ def render_sql_interface():
             st.error("Please enter a SQL query")
             return
         
-        with st.spinner("Executing query..."):
-            result = engine.sql(sql_query)
-        
-        if result['success']:
-            st.success(f"✅ Query executed successfully! Returned {result['rows']} rows.")
-            
-            if result['data']:
-                # Display results
-                result_df = pd.DataFrame(result['data'])
-                st.dataframe(result_df, use_container_width=True)
+        try:
+            if query_mode == "🏁 Performance Comparison":
+                # Run both queries and compare performance
+                st.write("**Performance Comparison Results:**")
                 
-                # Download options
-                if len(result_df) > 0:
-                    col1, col2 = st.columns(2)
+                with st.spinner("Running performance comparison..."):
+                    # Execute Redis cache query
+                    import time
+                    start_time = time.time()
+                    cache_result = engine.query_engine.execute_sql(sql_query)
+                    cache_time = time.time() - start_time
                     
-                    with col1:
-                        csv_data = result_df.to_csv(index=False)
-                        st.download_button(
-                            "📥 Download CSV",
-                            csv_data,
-                            "query_result.csv",
-                            "text/csv",
-                            use_container_width=True
-                        )
+                    # Execute direct parquet query
+                    start_time = time.time()
+                    parquet_result = engine.query_engine.execute_sql_direct_parquet(sql_query, engine.config.db_root)
+                    parquet_time = time.time() - start_time
+                
+                # Performance comparison metrics
+                perf_cols = st.columns(4)
+                with perf_cols[0]:
+                    st.metric("🗄️ Redis Cache", f"{cache_time:.4f}s", delta=f"{cache_result.get('rows', 0)} rows")
+                with perf_cols[1]:
+                    st.metric("📁 Direct Parquet", f"{parquet_time:.4f}s", delta=f"{parquet_result.get('rows', 0)} rows")
+                with perf_cols[2]:
+                    if parquet_time > 0:
+                        speedup = cache_time / parquet_time if cache_time > parquet_time else parquet_time / cache_time
+                        winner = "Redis Cache" if cache_time < parquet_time else "Direct Parquet"
+                        st.metric("🏆 Winner", winner, delta=f"{speedup:.1f}x faster")
+                    else:
+                        st.metric("🏆 Winner", "Redis Cache", delta="N/A")
+                with perf_cols[3]:
+                    cache_success = cache_result.get("success", False)
+                    parquet_success = parquet_result.get("success", False)
+                    both_success = cache_success and parquet_success
+                    st.metric("✅ Results Match", "Yes" if both_success else "No", delta="Both succeeded" if both_success else "Check errors")
+                
+                # Show results from cache (they should be the same)
+                if cache_result.get("success", False):
+                    st.success(f"✅ Query executed successfully! ({cache_result['rows']} rows returned)")
                     
-                    with col2:
-                        json_data = result_df.to_json(orient='records', indent=2)
-                        if json_data:
-                            st.download_button(
-                                "📥 Download JSON",
-                                json_data,
-                                "query_result.json",
-                                "application/json",
-                                use_container_width=True
-                            )
-            else:
-                st.info("Query returned no results")
-        else:
-            st.error(f"❌ Query failed: {result['error']}")
+                    if cache_result["rows"] > 0 and cache_result.get("data"):
+                        df = pd.DataFrame(cache_result["data"])
+                        st.dataframe(df, use_container_width=True)
+                        
+                        # Download options
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            csv_data = df.to_csv(index=False)
+                            st.download_button("📥 Download CSV", csv_data, "query_results.csv", "text/csv", use_container_width=True)
+                        with col2:
+                            json_data = df.to_json(orient='records', indent=2)
+                            st.download_button("📥 Download JSON", json_data, "query_results.json", "application/json", use_container_width=True)
+                    else:
+                        st.info("Query executed successfully but returned no rows")
+                else:
+                    st.error(f"❌ Cache query failed: {cache_result.get('error', 'Unknown error')}")
+                    
+                if not parquet_result.get("success", False):
+                    st.error(f"❌ Parquet query failed: {parquet_result.get('error', 'Unknown error')}")
+                    
+            elif query_mode == "🗄️ Redis Cache Only":
+                # Execute only Redis cache query
+                with st.spinner("Executing Redis cache query..."):
+                    result = engine.query_engine.execute_sql(sql_query)
+                
+                if result.get("success", False):
+                    st.success(f"✅ Redis Cache query executed! ({result['rows']} rows returned)")
+                    
+                    if result["rows"] > 0 and result.get("data"):
+                        df = pd.DataFrame(result["data"])
+                        st.dataframe(df, use_container_width=True)
+                        
+                        # Download options
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            csv_data = df.to_csv(index=False)
+                            st.download_button("📥 Download CSV", csv_data, "query_results.csv", "text/csv", use_container_width=True)
+                        with col2:
+                            json_data = df.to_json(orient='records', indent=2)
+                            st.download_button("📥 Download JSON", json_data, "query_results.json", "application/json", use_container_width=True)
+                    else:
+                        st.info("Query executed successfully but returned no rows")
+                else:
+                    st.error(f"❌ Query failed: {result.get('error', 'Unknown error')}")
+                    
+            elif query_mode == "📁 Direct Parquet Only":
+                # Execute only direct parquet query
+                with st.spinner("Executing direct Parquet query..."):
+                    result = engine.query_engine.execute_sql_direct_parquet(sql_query, engine.config.db_root)
+                
+                if result.get("success", False):
+                    query_time = result.get("query_time", 0)
+                    st.success(f"✅ Direct Parquet query executed in {query_time:.4f}s! ({result['rows']} rows returned)")
+                    
+                    if result["rows"] > 0 and result.get("data"):
+                        df = pd.DataFrame(result["data"])
+                        st.dataframe(df, use_container_width=True)
+                        
+                        # Download options
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            csv_data = df.to_csv(index=False)
+                            st.download_button("📥 Download CSV", csv_data, "query_results.csv", "text/csv", use_container_width=True)
+                        with col2:
+                            json_data = df.to_json(orient='records', indent=2)
+                            st.download_button("📥 Download JSON", json_data, "query_results.json", "application/json", use_container_width=True)
+                    else:
+                        st.info("Query executed successfully but returned no rows")
+                else:
+                    st.error(f"❌ Query failed: {result.get('error', 'Unknown error')}")
+                    
+        except Exception as e:
+            st.error(f"❌ Error executing query: {e}")
     
-    # Query examples
-    with st.expander("📚 Example Queries", expanded=False):
+    # Query examples section
+    with st.expander("💡 Query Examples & Tips", expanded=False):
+        st.write("**Example Queries:**")
+        
         examples = [
-            "SELECT * FROM users LIMIT 5",
-            "SELECT * FROM products WHERE price > 100",
-            "SELECT u.name, o.total FROM users u JOIN orders o ON u.user_id = o.user_id",
-            "SELECT COUNT(*) as total_products FROM products",
-            "SELECT 'users' as table_name, COUNT(*) as rows FROM users UNION ALL SELECT 'products', COUNT(*) FROM products",
+            ("Basic Selection", "SELECT * FROM users WHERE active = true"),
+            ("Aggregation", "SELECT category, COUNT(*) as count, AVG(price) as avg_price FROM products GROUP BY category"),
+            ("Join Query", "SELECT u.name, o.total, p.name as product FROM users u JOIN orders o ON u.id = o.user_id JOIN products p ON o.product_id = p.id"),
+            ("Window Function", "SELECT name, age, RANK() OVER (ORDER BY age DESC) as age_rank FROM users"),
+            ("Date Filtering", "SELECT * FROM orders WHERE date >= '2025-01-01'"),
+            ("Complex Analytics", "WITH user_stats AS (SELECT user_id, COUNT(*) as order_count, SUM(total) as total_spent FROM orders GROUP BY user_id) SELECT u.name, us.order_count, us.total_spent FROM users u JOIN user_stats us ON u.id = us.user_id ORDER BY us.total_spent DESC")
         ]
         
-        for i, example in enumerate(examples, 1):
-            if st.button(f"Example {i}", key=f"example_{i}"):
-                st.session_state.sql_input = example
-                st.rerun()
-            st.code(example, language="sql")
+        for title, query in examples:
+            with st.container():
+                st.write(f"**{title}:**")
+                if st.button(f"Use this query", key=f"example_{title.replace(' ', '_').lower()}"):
+                    st.session_state.sql_input = query
+                    st.rerun()
+            st.code(query, language="sql")
+        
+        st.divider()
+        st.write("**Performance Tips:**")
+        st.write("• **Redis Cache**: Fast for repeated queries, data already in memory")  
+        st.write("• **Direct Parquet**: Uses ranked window functions for deduplication, may be slower but always current")
+        st.write("• **Partitioned Files**: Each update creates a new partition file with timestamp")
+        st.write("• **Primary Key Ranking**: Latest records selected by _modified_time for each primary key")
 
 
 def render_write_operations():

@@ -67,7 +67,7 @@ class FileMonitor:
             return set()
     
     def load_and_cache_data(self) -> bool:
-        """Load data from files and update cache"""
+        """Load data from partitioned files and update cache with deduplication"""
         try:
             db_path = Path(self.config.db_root)
             if not db_path.exists():
@@ -86,33 +86,59 @@ class FileMonitor:
                 self.logger.warning(f"No {file_type} files found")
                 return True
             
+            # Group files by table name (handle both partitioned and legacy files)
+            table_files = {}
+            for file_path in data_files:
+                filename = file_path.stem  # Get filename without extension
+                
+                # Extract table name from partition filename or use as is
+                if "_partition_" in filename:
+                    table_name = filename.split("_partition_")[0]
+                else:
+                    # Legacy single file format
+                    table_name = filename
+                
+                if table_name not in table_files:
+                    table_files[table_name] = []
+                table_files[table_name].append(file_path)
+            
             total_rows = 0
             tables_loaded = 0
             
-            # Load each file as a separate table
-            for file_path in data_files:
+            # Process each table by combining partitions and deduplicating
+            for table_name, file_paths in table_files.items():
                 try:
-                    table_name = file_path.stem  # Get filename without extension
-                    df = self._load_data_file(file_path)
+                    dataframes = []
                     
-                    if df is not None and not df.empty:
-                        # Add metadata columns
-                        df['_source_file'] = file_path.name
-                        df['_modified_time'] = file_path.stat().st_mtime
+                    # Load all partition files for this table
+                    for file_path in file_paths:
+                        df = self._load_data_file(file_path)
                         
-                        # Apply primary key based deduplication to get latest records
-                        df = self._extract_latest_records(df, table_name)
+                        if df is not None and not df.empty:
+                            # Add metadata columns
+                            df['_source_file'] = file_path.name
+                            if '_modified_time' not in df.columns:
+                                df['_modified_time'] = file_path.stat().st_mtime
+                            
+                            dataframes.append(df)
+                    
+                    if dataframes:
+                        # Combine all partitions for this table
+                        combined_df = pd.concat(dataframes, ignore_index=True)
+                        
+                        # Apply primary key based deduplication using _modified_time ranking
+                        combined_df = self._extract_latest_records_from_partitions(combined_df, table_name)
                         
                         # Store table in cache
-                        self.cache_manager.store_table_snapshot(table_name, df)
+                        self.cache_manager.store_table_snapshot(table_name, combined_df)
                         
-                        total_rows += len(df)
+                        total_rows += len(combined_df)
                         tables_loaded += 1
                         
-                        self.logger.info(f"Loaded table '{table_name}': {len(df)} rows")
+                        self.logger.info(f"Loaded table '{table_name}': {len(combined_df)} rows")
                     
                 except Exception as e:
-                    self.logger.error(f"Failed to load file {file_path.name}: {e}")
+                    self.logger.error(f"Failed to load table '{table_name}': {e}")
                     continue
             
             self.logger.info(f"Loaded {total_rows} total rows from {tables_loaded} tables")
@@ -168,6 +194,28 @@ class FileMonitor:
             
         except Exception as e:
             self.logger.error(f"Failed to extract latest records for table '{table_name}': {e}")
+            return df
+    
+    def _extract_latest_records_from_partitions(self, df: pd.DataFrame, table_name: str) -> pd.DataFrame:
+        """Extract latest records from partitioned files using primary key and _modified_time ranking"""
+        try:
+            primary_key = self.config.table_primary_keys.get(table_name)
+            if not primary_key or primary_key not in df.columns:
+                # No primary key defined or column doesn't exist, return as-is
+                return df
+            
+            # Use ranking approach: sort by _modified_time descending, then drop duplicates to keep latest
+            df_sorted = df.sort_values('_modified_time', ascending=False)
+            latest_df = df_sorted.drop_duplicates(subset=[primary_key], keep='first')
+            
+            dropped_count = len(df) - len(latest_df)
+            if dropped_count > 0:
+                self.logger.info(f"Deduplicated {dropped_count} records for table '{table_name}' using primary key '{primary_key}' ranked by _modified_time")
+            
+            return latest_df
+            
+        except Exception as e:
+            self.logger.error(f"Failed to extract latest records from partitions for table '{table_name}': {e}")
             return df
     
     def check_for_changes(self) -> bool:
@@ -330,7 +378,7 @@ class FileMonitor:
             self.logger.error(f"Failed to create sample files: {e}")
     
     def create_table_update(self, table_name: str, records: List[Dict[str, Any]]) -> bool:
-        """Create/update table with new records, preserving types"""
+        """Create/update table with new records using partitioned files"""
         try:
             db_path = Path(self.config.db_root)
             db_path.mkdir(parents=True, exist_ok=True)
@@ -344,30 +392,34 @@ class FileMonitor:
             
             # Add timestamp for tracking latest records
             import time
-            df['_updated_at'] = time.time()
+            from datetime import datetime
+            current_time = time.time()
+            df['_modified_time'] = current_time
+            
+            # Create partitioned filename with timestamp
+            timestamp_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S-%f")[:-3]  # Remove last 3 microsecond digits
+            partition_filename = f"{table_name}_partition_{timestamp_str}.parquet"
             
             # Write as Parquet or JSON based on configuration
             if self.config.file_format == "parquet":
-                file_path = db_path / f"{table_name}.parquet"
-                
-                # For Parquet, completely replace the file with new data
-                # This ensures updates work correctly and primary key deduplication happens
+                file_path = db_path / partition_filename
                 df.to_parquet(file_path, compression=self.config.parquet_compression, index=False)
             else:
-                file_path = db_path / f"{table_name}.json"
-                # For JSON, we'll overwrite for simplicity
-                records_dict = df.drop(columns=['_updated_at']).to_dict('records')
+                # For JSON, still use partitioned approach
+                partition_filename = f"{table_name}_partition_{timestamp_str}.json"
+                file_path = db_path / partition_filename
+                records_dict = df.drop(columns=['_modified_time']).to_dict('records')
                 import json
                 with open(file_path, 'w', encoding='utf-8') as f:
                     json.dump(records_dict, f, indent=2)
             
-            self.logger.info(f"Updated table '{table_name}' with {len(records)} records")
+            self.logger.info(f"Created partition file '{partition_filename}' with {len(records)} records")
             
-            # Trigger reload to refresh cache
+            # Trigger reload to refresh cache with deduplication
             self.load_and_cache_data()
             
             return True
             
         except Exception as e:
-            self.logger.error(f"Failed to update table '{table_name}': {e}")
+            self.logger.error(f"Failed to create partition for table '{table_name}': {e}")
             return False
