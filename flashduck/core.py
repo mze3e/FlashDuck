@@ -135,9 +135,9 @@ class FlashDuckEngine:
         """Get table information"""
         return self.query_engine.get_table_info()
     
-    def get_sample_data(self, limit: int = 10) -> Dict[str, Any]:
+    def get_sample_data(self, limit: int = 10, table_name: str = None) -> Dict[str, Any]:
         """Get sample data"""
-        return self.query_engine.get_sample_data(limit)
+        return self.query_engine.get_sample_data(limit, table_name)
     
     def force_refresh(self) -> bool:
         """Force refresh cache from files"""
