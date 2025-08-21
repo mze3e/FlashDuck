@@ -6,6 +6,7 @@ import os
 import time
 import logging
 import threading
+import json
 from typing import Set, List, Dict, Any, Callable
 from pathlib import Path
 import pandas as pd
@@ -63,38 +64,56 @@ class FileMonitor:
     def load_and_cache_data(self) -> bool:
         """Load data from files and update cache"""
         try:
-            # Load all JSON files
-            data = load_json_files(self.config.db_root, "*.json")
-            
-            if not data:
-                self.logger.warning("No data files found")
-                # Store empty DataFrame
-                empty_df = pd.DataFrame()
-                self.cache_manager.store_snapshot(empty_df)
+            db_path = Path(self.config.db_root)
+            if not db_path.exists():
+                self.logger.warning("Database directory not found")
                 return True
             
-            # Convert to DataFrames
-            dataframes = []
-            for item in data:
-                if isinstance(item, dict):
-                    df = pd.DataFrame([item])
-                    dataframes.append(df)
-                elif isinstance(item, list):
-                    df = pd.DataFrame(item)
-                    dataframes.append(df)
+            # Get all JSON files
+            json_files = list(db_path.glob("*.json"))
             
-            if not dataframes:
-                empty_df = pd.DataFrame()
-                self.cache_manager.store_snapshot(empty_df)
+            if not json_files:
+                self.logger.warning("No JSON files found")
                 return True
             
-            # Merge with schema evolution
-            merged_df = merge_schemas(dataframes, self.config.schema_evolution)
+            total_rows = 0
+            tables_loaded = 0
             
-            # Store in cache
-            self.cache_manager.store_snapshot(merged_df)
+            # Load each JSON file as a separate table
+            for file_path in json_files:
+                try:
+                    table_name = file_path.stem  # Get filename without extension
+                    
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        file_data = json.load(f)
+                    
+                    # Convert to DataFrame
+                    if isinstance(file_data, list):
+                        df = pd.DataFrame(file_data)
+                    elif isinstance(file_data, dict):
+                        df = pd.DataFrame([file_data])
+                    else:
+                        self.logger.warning(f"Unsupported data format in {file_path.name}")
+                        continue
+                    
+                    if not df.empty:
+                        # Add metadata columns
+                        df['_source_file'] = file_path.name
+                        df['_modified_time'] = file_path.stat().st_mtime
+                        
+                        # Store table in cache
+                        self.cache_manager.store_table_snapshot(table_name, df)
+                        
+                        total_rows += len(df)
+                        tables_loaded += 1
+                        
+                        self.logger.info(f"Loaded table '{table_name}': {len(df)} rows")
+                    
+                except Exception as e:
+                    self.logger.error(f"Failed to load file {file_path.name}: {e}")
+                    continue
             
-            self.logger.info(f"Loaded {len(merged_df)} rows from {len(dataframes)} files")
+            self.logger.info(f"Loaded {total_rows} total rows from {tables_loaded} tables")
             
             # Notify callbacks
             self._notify_cache_update()

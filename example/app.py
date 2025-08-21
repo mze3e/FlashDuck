@@ -232,29 +232,75 @@ def render_data_explorer():
         st.warning("No data available. Try refreshing the cache or adding some files.")
         return
     
-    # Sample data view
-    st.write("**Sample Data (first 20 rows):**")
-    sample_result = engine.get_sample_data(20)
+    # Display available tables
+    tables_info = table_info.get('tables', {})
+    table_names = table_info.get('table_names', [])
     
-    if sample_result['success'] and sample_result['data']:
-        sample_df = pd.DataFrame(sample_result['data'])
-        st.dataframe(sample_df, use_container_width=True)
+    if table_names:
+        st.write("**Available Tables:**")
+        # Table selector
+        selected_table = st.selectbox(
+            "Choose a table to explore:",
+            ["All Tables"] + table_names,
+            key="table_selector"
+        )
         
-        # Basic statistics
-        if len(sample_df) > 0:
-            st.write("**Basic Statistics:**")
-            stats_cols = st.columns(3)
+        # Sample data view
+        if selected_table == "All Tables":
+            st.write("**Sample Data from All Tables (first 20 rows):**")
+            sample_result = engine.get_sample_data(20)
+        else:
+            st.write(f"**Sample Data from '{selected_table}' (first 20 rows):**")
+            sample_result = engine.get_sample_data(20, selected_table)
+        
+        if sample_result['success'] and sample_result['data']:
+            sample_df = pd.DataFrame(sample_result['data'])
+            st.dataframe(sample_df, use_container_width=True)
+            
+            # Basic statistics
+            st.write("**Database Statistics:**")
+            stats_cols = st.columns(4)
             
             with stats_cols[0]:
-                st.metric("Total Rows", f"{table_info['rows']:,}")
+                st.metric("Total Tables", table_info.get('total_tables', 0))
             
             with stats_cols[1]:
-                st.metric("Total Columns", table_info['columns'])
+                st.metric("Total Rows", f"{table_info.get('total_rows', 0):,}")
             
             with stats_cols[2]:
-                cache_size = engine.cache_manager.get_snapshot_info().get('size_bytes', 0)
-                st.metric("Cache Size", format_bytes(cache_size))
+                total_size = table_info.get('total_size_bytes', 0)
+                st.metric("Total Cache Size", format_bytes(total_size))
             
+            with stats_cols[3]:
+                if selected_table != "All Tables" and selected_table in tables_info:
+                    table_rows = tables_info[selected_table].get('rows', 0)
+                    st.metric(f"'{selected_table}' Rows", f"{table_rows:,}")
+        
+        # Table details
+        if len(tables_info) > 0:
+            st.write("**Table Details:**")
+            table_details = []
+            for tname, tinfo in tables_info.items():
+                table_details.append({
+                    'Table': tname,
+                    'Rows': tinfo.get('rows', 0),
+                    'Columns': tinfo.get('columns', 0),
+                    'Size': format_bytes(tinfo.get('size_bytes', 0)),
+                    'Format': tinfo.get('format', 'unknown')
+                })
+            
+            if table_details:
+                details_df = pd.DataFrame(table_details)
+                st.dataframe(details_df, use_container_width=True)
+    else:
+        st.info("No tables found")
+        return
+    
+    # Column analysis for selected data
+    if sample_result['success'] and sample_result['data']:
+        sample_df = pd.DataFrame(sample_result['data'])
+        
+        if len(sample_df) > 0:
             # Column analysis - using simple charts instead of Plotly to avoid import issues
             with st.expander("📊 Column Analysis", expanded=False):
                 for column in sample_df.columns:
@@ -305,13 +351,14 @@ def render_sql_interface():
         return
     
     # Query input
-    default_query = f"SELECT * FROM {engine.config.table_name} LIMIT 10"
+    default_query = "SELECT * FROM users LIMIT 10"
     
     sql_query = st.text_area(
         "Enter SQL Query:",
-        value=default_query,
+        value=st.session_state.get('sql_input', default_query),
         height=100,
-        help="Enter a read-only SQL query. Write operations are not allowed."
+        help="Enter a read-only SQL query. Write operations are not allowed.",
+        key="sql_input"
     )
     
     col1, col2, col3 = st.columns([1, 1, 2])
@@ -379,13 +426,16 @@ def render_sql_interface():
     # Query examples
     with st.expander("📚 Example Queries", expanded=False):
         examples = [
-            f"SELECT COUNT(*) as total_rows FROM {engine.config.table_name}",
-            f"SELECT * FROM {engine.config.table_name} ORDER BY _modified_time DESC LIMIT 5",
-            f"SELECT _source_file, COUNT(*) as records FROM {engine.config.table_name} GROUP BY _source_file",
+            "SELECT * FROM users LIMIT 5",
+            "SELECT * FROM products WHERE price > 100",
+            "SELECT u.name, o.total FROM users u JOIN orders o ON u.user_id = o.user_id",
+            "SELECT COUNT(*) as total_products FROM products",
+            "SELECT 'users' as table_name, COUNT(*) as rows FROM users UNION ALL SELECT 'products', COUNT(*) FROM products",
         ]
         
         for i, example in enumerate(examples, 1):
             if st.button(f"Example {i}", key=f"example_{i}"):
+                st.session_state.sql_input = example
                 st.rerun()
             st.code(example, language="sql")
 

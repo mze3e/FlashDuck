@@ -26,12 +26,12 @@ class QueryEngine:
             # Validate SQL is read-only
             validate_sql_readonly(sql)
             
-            # Load snapshot from cache
-            df = self.cache_manager.load_snapshot()
-            if df is None:
+            # Load all tables from cache
+            tables = self.cache_manager.get_all_tables()
+            if not tables:
                 return {
                     "success": False,
-                    "error": "No data available in cache",
+                    "error": "No tables available in cache",
                     "rows": 0,
                     "columns": [],
                     "data": []
@@ -40,8 +40,9 @@ class QueryEngine:
             # Execute query with DuckDB
             conn = duckdb.connect()
             try:
-                # Register dataframe as table
-                conn.register(self.config.table_name, df)
+                # Register all tables in DuckDB
+                for table_name, df in tables.items():
+                    conn.register(table_name, df)
                 
                 # Execute query
                 result = conn.execute(sql).fetchdf()
@@ -62,7 +63,8 @@ class QueryEngine:
                     "columns": list(result.columns),
                     "data": data,
                     "sql": sql,
-                    "format": self.config.sql_output_format
+                    "format": self.config.sql_output_format,
+                    "available_tables": list(tables.keys())
                 }
                 
             finally:
@@ -80,27 +82,31 @@ class QueryEngine:
             }
     
     def get_table_info(self) -> Dict[str, Any]:
-        """Get information about the cached table"""
+        """Get information about all cached tables"""
         try:
-            # Get snapshot info from cache
-            info = self.cache_manager.get_snapshot_info()
+            # Get info for all tables
+            all_table_info = self.cache_manager.get_all_table_info()
+            table_names = self.cache_manager.get_table_names()
             
-            if not info:
+            if not table_names:
                 return {
                     "exists": False,
-                    "rows": 0,
-                    "columns": 0,
-                    "column_names": [],
-                    "size_bytes": 0
+                    "tables": {},
+                    "total_tables": 0,
+                    "total_rows": 0,
+                    "total_size_bytes": 0
                 }
+            
+            total_rows = sum(info.get("rows", 0) for info in all_table_info.values())
+            total_size = sum(info.get("size_bytes", 0) for info in all_table_info.values())
             
             return {
                 "exists": True,
-                "rows": info.get("rows", 0),
-                "columns": info.get("columns", 0),
-                "column_names": info.get("column_names", []),
-                "size_bytes": info.get("size_bytes", 0),
-                "format": info.get("format", "unknown")
+                "tables": all_table_info,
+                "total_tables": len(table_names),
+                "total_rows": total_rows,
+                "total_size_bytes": total_size,
+                "table_names": table_names
             }
             
         except Exception as e:
@@ -110,9 +116,29 @@ class QueryEngine:
                 "error": str(e)
             }
     
-    def get_sample_data(self, limit: int = 10) -> Dict[str, Any]:
-        """Get sample data from the table"""
-        sql = f"SELECT * FROM {self.config.table_name} LIMIT {limit}"
+    def get_sample_data(self, limit: int = 10, table_name: str = None) -> Dict[str, Any]:
+        """Get sample data from tables"""
+        if table_name:
+            sql = f"SELECT * FROM {table_name} LIMIT {limit}"
+        else:
+            # Get sample from all tables
+            table_names = self.cache_manager.get_table_names()
+            if not table_names:
+                return {
+                    "success": False,
+                    "error": "No tables available",
+                    "rows": 0,
+                    "columns": [],
+                    "data": []
+                }
+            
+            # Union sample data from all tables with table name column
+            union_queries = []
+            for tname in table_names:
+                union_queries.append(f"SELECT '{tname}' as _table_name, * FROM {tname} LIMIT {max(1, limit // len(table_names))}")
+            
+            sql = " UNION ALL ".join(union_queries) + f" LIMIT {limit}"
+        
         return self.execute_sql(sql)
     
     def get_column_stats(self, column: str) -> Dict[str, Any]:

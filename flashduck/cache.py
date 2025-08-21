@@ -23,14 +23,21 @@ class CacheManager:
         self.redis_client = redis.from_url(config.redis_url, decode_responses=False)
         self.logger = logging.getLogger(__name__)
         
-        # Redis keys
-        self.snapshot_key = f"snapshot:{config.table_name}"
-        self.metadata_key = f"metadata:{config.table_name}"
-        self.stream_key = f"writes:{config.table_name}"
+        # Redis keys for multiple tables
+        self.tables_list_key = "flashduck:tables"
+    
+    def _get_table_keys(self, table_name: str) -> tuple:
+        """Get Redis keys for a specific table"""
+        snapshot_key = f"snapshot:{table_name}"
+        metadata_key = f"metadata:{table_name}"
+        stream_key = f"writes:{table_name}"
+        return snapshot_key, metadata_key, stream_key
         
-    def store_snapshot(self, df: pd.DataFrame) -> None:
-        """Store DataFrame snapshot in Redis"""
+    def store_table_snapshot(self, table_name: str, df: pd.DataFrame) -> None:
+        """Store DataFrame snapshot for a specific table in Redis"""
         try:
+            snapshot_key, metadata_key, _ = self._get_table_keys(table_name)
+            
             if self.config.snapshot_format == "arrow":
                 data = dataframe_to_arrow_ipc(df)
                 format_type = "arrow"
@@ -45,34 +52,41 @@ class CacheManager:
             
             # Store data and metadata atomically using pipeline
             with self.redis_client.pipeline() as pipe:
-                pipe.set(self.snapshot_key, data)
-                pipe.hset(self.metadata_key, mapping={
+                pipe.set(snapshot_key, data)
+                pipe.hset(metadata_key, mapping={
                     "format": format_type,
                     "rows": len(df),
                     "columns": len(df.columns),
                     "size_bytes": len(data),
                     "column_names": json.dumps(list(df.columns))
                 })
+                pipe.sadd(self.tables_list_key, table_name)  # Track table names
                 pipe.execute()
             
             self.logger.info(
-                f"Stored snapshot: {len(df)} rows, {len(df.columns)} columns, "
+                f"Stored table '{table_name}': {len(df)} rows, {len(df.columns)} columns, "
                 f"{len(data)} bytes ({format_type} format)"
             )
             
         except Exception as e:
-            self.logger.error(f"Failed to store snapshot: {e}")
+            self.logger.error(f"Failed to store snapshot for table '{table_name}': {e}")
             raise
     
-    def load_snapshot(self) -> Optional[pd.DataFrame]:
-        """Load DataFrame snapshot from Redis"""
+    def store_snapshot(self, df: pd.DataFrame) -> None:
+        """Store DataFrame snapshot in Redis (legacy method for backwards compatibility)"""
+        self.store_table_snapshot(self.config.table_name, df)
+    
+    def load_table_snapshot(self, table_name: str) -> Optional[pd.DataFrame]:
+        """Load DataFrame snapshot for a specific table from Redis"""
         try:
+            snapshot_key, metadata_key, _ = self._get_table_keys(table_name)
+            
             # Get data and metadata
-            data = self.redis_client.get(self.snapshot_key)
-            metadata = self.redis_client.hgetall(self.metadata_key)
+            data = self.redis_client.get(snapshot_key)
+            metadata = self.redis_client.hgetall(metadata_key)
             
             if not data or not metadata:
-                self.logger.warning("No snapshot found in cache")
+                self.logger.warning(f"No snapshot found in cache for table '{table_name}'")
                 return None
             
             format_type = metadata.get(b'format', b'').decode('utf-8')
@@ -89,18 +103,41 @@ class CacheManager:
                 raise ValueError(f"Unknown snapshot format: {format_type}")
             
             rows = int(metadata.get(b'rows', 0))
-            self.logger.info(f"Loaded snapshot: {rows} rows ({format_type} format)")
+            self.logger.info(f"Loaded table '{table_name}': {rows} rows ({format_type} format)")
             
             return df
             
         except Exception as e:
-            self.logger.error(f"Failed to load snapshot: {e}")
+            self.logger.error(f"Failed to load snapshot for table '{table_name}': {e}")
             raise
     
-    def get_snapshot_info(self) -> Dict[str, Any]:
-        """Get snapshot metadata"""
+    def load_snapshot(self) -> Optional[pd.DataFrame]:
+        """Load DataFrame snapshot from Redis (legacy method for backwards compatibility)"""
+        return self.load_table_snapshot(self.config.table_name)
+    
+    def get_table_names(self) -> List[str]:
+        """Get list of all table names in cache"""
         try:
-            metadata = self.redis_client.hgetall(self.metadata_key)
+            table_names = self.redis_client.smembers(self.tables_list_key)
+            return [name.decode('utf-8') if isinstance(name, bytes) else name for name in table_names]
+        except Exception as e:
+            self.logger.error(f"Failed to get table names: {e}")
+            return []
+    
+    def get_all_tables(self) -> Dict[str, pd.DataFrame]:
+        """Load all tables from cache"""
+        tables = {}
+        for table_name in self.get_table_names():
+            df = self.load_table_snapshot(table_name)
+            if df is not None:
+                tables[table_name] = df
+        return tables
+    
+    def get_table_info(self, table_name: str) -> Dict[str, Any]:
+        """Get metadata for a specific table"""
+        try:
+            _, metadata_key, _ = self._get_table_keys(table_name)
+            metadata = self.redis_client.hgetall(metadata_key)
             if not metadata:
                 return {}
             
@@ -120,8 +157,19 @@ class CacheManager:
             return info
             
         except Exception as e:
-            self.logger.error(f"Failed to get snapshot info: {e}")
+            self.logger.error(f"Failed to get table info for '{table_name}': {e}")
             return {}
+    
+    def get_snapshot_info(self) -> Dict[str, Any]:
+        """Get snapshot metadata (legacy method for backwards compatibility)"""
+        return self.get_table_info(self.config.table_name)
+    
+    def get_all_table_info(self) -> Dict[str, Dict[str, Any]]:
+        """Get metadata for all tables"""
+        all_info = {}
+        for table_name in self.get_table_names():
+            all_info[table_name] = self.get_table_info(table_name)
+        return all_info
     
     def enqueue_write(self, operation: str, record_id: str, data: Optional[Dict[str, Any]] = None) -> str:
         """Enqueue write operation to Redis Stream"""
