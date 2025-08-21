@@ -1,0 +1,6 @@
+# This directory contains the shared database files for DuckRedis
+# 
+# JSON files placed in this directory will be automatically monitored
+# and loaded into the Redis cache for DuckDB querying.
+#
+# The .gitkeep file ensures this directory is tracked by git even when empty.
