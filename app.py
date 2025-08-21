@@ -6,8 +6,6 @@ import streamlit as st
 import json
 import time
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 from datetime import datetime
 import os
 from duckredis import DuckRedisEngine, Config
@@ -252,33 +250,49 @@ def render_data_explorer():
                 cache_size = engine.cache_manager.get_snapshot_info().get('size_bytes', 0)
                 st.metric("Cache Size", format_bytes(cache_size))
             
-            # Column analysis
+            # Column analysis - using simple charts instead of Plotly to avoid import issues
             with st.expander("📊 Column Analysis", expanded=False):
                 for column in sample_df.columns:
+                    st.write(f"**{column}**")
+                    
                     if sample_df[column].dtype in ['int64', 'float64']:
-                        # Numeric column
+                        # Numeric column - show basic statistics
                         col_stats = sample_df[column].describe()
+                        stats_col1, stats_col2 = st.columns(2)
                         
-                        fig = px.histogram(
-                            sample_df, 
-                            x=column, 
-                            title=f"Distribution of {column}",
-                            nbins=min(20, len(sample_df[column].unique()))
-                        )
-                        fig.update_layout(height=300)
-                        st.plotly_chart(fig, use_container_width=True)
+                        with stats_col1:
+                            st.metric("Mean", f"{col_stats['mean']:.2f}")
+                            st.metric("Min", f"{col_stats['min']:.2f}")
+                        
+                        with stats_col2:
+                            st.metric("Max", f"{col_stats['max']:.2f}")
+                            st.metric("Std", f"{col_stats['std']:.2f}")
+                        
+                        # Use Streamlit's native bar chart instead of Plotly
+                        try:
+                            hist_data = sample_df[column].value_counts().head(20)
+                            st.bar_chart(hist_data)
+                        except:
+                            st.write(f"Data type: {sample_df[column].dtype}")
                         
                     elif len(sample_df[column].unique()) < 20:
                         # Categorical column with few values
                         value_counts = sample_df[column].value_counts()
+                        st.write(f"Unique values: {len(sample_df[column].unique())}")
                         
-                        fig = px.bar(
-                            x=value_counts.index,
-                            y=value_counts.values,
-                            title=f"Value Counts for {column}"
-                        )
-                        fig.update_layout(height=300)
-                        st.plotly_chart(fig, use_container_width=True)
+                        # Use Streamlit's native bar chart
+                        try:
+                            st.bar_chart(value_counts)
+                        except:
+                            # Fallback to simple display
+                            for val, count in value_counts.items():
+                                st.write(f"• {val}: {count}")
+                    
+                    else:
+                        st.write(f"Data type: {sample_df[column].dtype}")
+                        st.write(f"Unique values: {len(sample_df[column].unique())}")
+                    
+                    st.divider()
     else:
         st.error(f"Failed to load sample data: {sample_result.get('error', 'Unknown error')}")
 
@@ -351,13 +365,14 @@ def render_sql_interface():
                     
                     with col2:
                         json_data = result_df.to_json(orient='records', indent=2)
-                        st.download_button(
-                            "📥 Download JSON",
-                            json_data,
-                            "query_result.json",
-                            "application/json",
-                            use_container_width=True
-                        )
+                        if json_data:
+                            st.download_button(
+                                "📥 Download JSON",
+                                json_data,
+                                "query_result.json",
+                                "application/json",
+                                use_container_width=True
+                            )
             else:
                 st.info("Query returned no results")
         else:
