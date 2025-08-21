@@ -171,6 +171,106 @@ class CacheManager:
             all_info[table_name] = self.get_table_info(table_name)
         return all_info
     
+    def get_all_redis_keys(self) -> List[str]:
+        """Get all Redis keys related to FlashDuck"""
+        try:
+            # Get all keys with FlashDuck patterns
+            patterns = ["snapshot:*", "metadata:*", "writes:*", "flashduck:*"]
+            all_keys = set()
+            
+            for pattern in patterns:
+                keys = self.redis_client.keys(pattern)
+                for key in keys:
+                    if isinstance(key, bytes):
+                        all_keys.add(key.decode('utf-8'))
+                    else:
+                        all_keys.add(key)
+            
+            return sorted(list(all_keys))
+        except Exception as e:
+            self.logger.error(f"Failed to get Redis keys: {e}")
+            return []
+    
+    def get_redis_key_info(self, key: str) -> Dict[str, Any]:
+        """Get information about a specific Redis key"""
+        try:
+            # Check if key exists
+            if not self.redis_client.exists(key):
+                return {"exists": False}
+            
+            # Get key type
+            key_type = self.redis_client.type(key).decode('utf-8')
+            
+            info = {
+                "exists": True,
+                "type": key_type,
+                "ttl": self.redis_client.ttl(key)
+            }
+            
+            # Get size and sample data based on type
+            if key_type == "string":
+                value = self.redis_client.get(key)
+                info["size_bytes"] = len(value) if value else 0
+                
+                # Try to decode as text if small enough
+                if value and len(value) < 1000:
+                    try:
+                        info["sample_value"] = value.decode('utf-8')[:200]
+                    except UnicodeDecodeError:
+                        info["sample_value"] = f"<Binary data, {len(value)} bytes>"
+                else:
+                    info["sample_value"] = f"<Large binary data, {len(value)} bytes>"
+                    
+            elif key_type == "hash":
+                hash_data = self.redis_client.hgetall(key)
+                info["hash_fields"] = len(hash_data)
+                info["sample_fields"] = {}
+                
+                # Show first few fields
+                for i, (field, value) in enumerate(hash_data.items()):
+                    if i >= 5:  # Limit to first 5 fields
+                        break
+                    field_str = field.decode('utf-8') if isinstance(field, bytes) else field
+                    value_str = value.decode('utf-8') if isinstance(value, bytes) else str(value)
+                    info["sample_fields"][field_str] = value_str[:100]  # Truncate long values
+                    
+            elif key_type == "set":
+                set_size = self.redis_client.scard(key)
+                info["set_size"] = set_size
+                
+                # Get sample members
+                sample_members = self.redis_client.srandmember(key, 5)
+                info["sample_members"] = []
+                for member in sample_members:
+                    member_str = member.decode('utf-8') if isinstance(member, bytes) else str(member)
+                    info["sample_members"].append(member_str)
+                    
+            elif key_type == "stream":
+                stream_info = self.redis_client.xinfo_stream(key)
+                info["stream_length"] = stream_info.get("length", 0)
+                info["stream_groups"] = stream_info.get("groups", 0)
+                
+                # Get latest entries
+                try:
+                    latest_entries = self.redis_client.xrevrange(key, count=3)
+                    info["latest_entries"] = []
+                    for entry_id, fields in latest_entries:
+                        entry_id_str = entry_id.decode('utf-8') if isinstance(entry_id, bytes) else entry_id
+                        fields_dict = {}
+                        for field, value in fields.items():
+                            field_str = field.decode('utf-8') if isinstance(field, bytes) else field
+                            value_str = value.decode('utf-8') if isinstance(value, bytes) else str(value)
+                            fields_dict[field_str] = value_str[:50]  # Truncate
+                        info["latest_entries"].append({"id": entry_id_str, "fields": fields_dict})
+                except Exception:
+                    info["latest_entries"] = []
+            
+            return info
+            
+        except Exception as e:
+            self.logger.error(f"Failed to get info for key '{key}': {e}")
+            return {"exists": False, "error": str(e)}
+    
     def enqueue_write(self, operation: str, record_id: str, data: Optional[Dict[str, Any]] = None) -> str:
         """Enqueue write operation to Redis Stream"""
         try:

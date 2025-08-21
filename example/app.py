@@ -516,6 +516,194 @@ def render_write_operations():
             st.error(f"❌ Error checking writes: {e}")
 
 
+def render_redis_explorer():
+    """Render Redis cache explorer interface"""
+    st.subheader("🗄️ Redis Cache Explorer")
+    
+    engine = get_engine()
+    if not engine:
+        st.error("FlashDuck engine not available")
+        return
+    
+    st.info("💡 Explore all Redis keys and cached data used by FlashDuck")
+    
+    # Get all Redis keys
+    redis_keys = engine.cache_manager.get_all_redis_keys()
+    
+    if not redis_keys:
+        st.warning("No Redis keys found")
+        return
+    
+    st.write(f"**Found {len(redis_keys)} Redis keys:**")
+    
+    # Key selector
+    selected_key = st.selectbox(
+        "Select a Redis key to inspect:",
+        redis_keys,
+        key="redis_key_selector"
+    )
+    
+    if selected_key:
+        st.divider()
+        
+        # Get key information
+        key_info = engine.cache_manager.get_redis_key_info(selected_key)
+        
+        if not key_info.get("exists"):
+            st.error(f"Key '{selected_key}' does not exist or has an error")
+            if "error" in key_info:
+                st.error(f"Error: {key_info['error']}")
+            return
+        
+        # Display key metadata
+        st.write(f"**Key:** `{selected_key}`")
+        
+        info_cols = st.columns(4)
+        with info_cols[0]:
+            st.metric("Type", key_info.get("type", "unknown"))
+        with info_cols[1]:
+            ttl = key_info.get("ttl", -1)
+            ttl_text = "Never expires" if ttl == -1 else f"{ttl}s" if ttl > 0 else "Expired"
+            st.metric("TTL", ttl_text)
+        with info_cols[2]:
+            if "size_bytes" in key_info:
+                st.metric("Size", format_bytes(key_info["size_bytes"]))
+        with info_cols[3]:
+            if "hash_fields" in key_info:
+                st.metric("Hash Fields", key_info["hash_fields"])
+            elif "set_size" in key_info:
+                st.metric("Set Size", key_info["set_size"])
+            elif "stream_length" in key_info:
+                st.metric("Stream Length", key_info["stream_length"])
+        
+        # Display key content based on type
+        key_type = key_info.get("type")
+        
+        if key_type == "string":
+            st.write("**String Content:**")
+            if "sample_value" in key_info:
+                if key_info["sample_value"].startswith("<"):
+                    st.info(key_info["sample_value"])
+                else:
+                    st.code(key_info["sample_value"], language="json")
+        
+        elif key_type == "hash":
+            st.write("**Hash Fields (first 5):**")
+            if "sample_fields" in key_info and key_info["sample_fields"]:
+                hash_df = pd.DataFrame([
+                    {"Field": k, "Value": v} 
+                    for k, v in key_info["sample_fields"].items()
+                ])
+                st.dataframe(hash_df, use_container_width=True)
+            else:
+                st.info("No hash fields to display")
+        
+        elif key_type == "set":
+            st.write("**Set Members (sample):**")
+            if "sample_members" in key_info and key_info["sample_members"]:
+                for i, member in enumerate(key_info["sample_members"], 1):
+                    st.write(f"{i}. {member}")
+            else:
+                st.info("No set members to display")
+        
+        elif key_type == "stream":
+            st.write("**Stream Information:**")
+            stream_info_cols = st.columns(2)
+            with stream_info_cols[0]:
+                st.metric("Total Entries", key_info.get("stream_length", 0))
+            with stream_info_cols[1]:
+                st.metric("Consumer Groups", key_info.get("stream_groups", 0))
+                
+            if "latest_entries" in key_info and key_info["latest_entries"]:
+                st.write("**Latest Entries:**")
+                for entry in key_info["latest_entries"]:
+                    with st.expander(f"Entry ID: {entry['id']}", expanded=False):
+                        entry_df = pd.DataFrame([
+                            {"Field": k, "Value": v} 
+                            for k, v in entry["fields"].items()
+                        ])
+                        st.dataframe(entry_df, use_container_width=True)
+            else:
+                st.info("No stream entries to display")
+        
+        # If this is a table snapshot key, show table data
+        if selected_key.startswith("snapshot:"):
+            table_name = selected_key.replace("snapshot:", "")
+            st.divider()
+            st.write(f"**Table Data for '{table_name}':**")
+            
+            try:
+                table_df = engine.cache_manager.load_table_snapshot(table_name)
+                if table_df is not None and not table_df.empty:
+                    st.write(f"**Rows:** {len(table_df)}, **Columns:** {len(table_df.columns)}")
+                    
+                    # Show sample data
+                    sample_size = min(20, len(table_df))
+                    st.write(f"**Sample Data (first {sample_size} rows):**")
+                    st.dataframe(table_df.head(sample_size), use_container_width=True)
+                    
+                    # Column info
+                    with st.expander("📊 Column Information", expanded=False):
+                        col_info = []
+                        for col in table_df.columns:
+                            col_info.append({
+                                "Column": col,
+                                "Type": str(table_df[col].dtype),
+                                "Non-null": table_df[col].count(),
+                                "Unique": table_df[col].nunique()
+                            })
+                        
+                        col_df = pd.DataFrame(col_info)
+                        st.dataframe(col_df, use_container_width=True)
+                else:
+                    st.info("Table is empty or could not be loaded")
+            except Exception as e:
+                st.error(f"Failed to load table data: {e}")
+    
+    # Summary section
+    st.divider()
+    st.write("**Redis Cache Summary:**")
+    
+    # Categorize keys
+    snapshot_keys = [k for k in redis_keys if k.startswith("snapshot:")]
+    metadata_keys = [k for k in redis_keys if k.startswith("metadata:")]
+    stream_keys = [k for k in redis_keys if k.startswith("writes:")]
+    other_keys = [k for k in redis_keys if not any(k.startswith(p) for p in ["snapshot:", "metadata:", "writes:"])]
+    
+    summary_cols = st.columns(4)
+    with summary_cols[0]:
+        st.metric("Table Snapshots", len(snapshot_keys))
+    with summary_cols[1]:
+        st.metric("Metadata Keys", len(metadata_keys))
+    with summary_cols[2]:
+        st.metric("Write Streams", len(stream_keys))
+    with summary_cols[3]:
+        st.metric("Other Keys", len(other_keys))
+    
+    # Key categories
+    with st.expander("📋 Key Categories", expanded=False):
+        if snapshot_keys:
+            st.write("**Table Snapshots:**")
+            for key in snapshot_keys:
+                table_name = key.replace("snapshot:", "")
+                st.write(f"• `{key}` → Table: {table_name}")
+        
+        if metadata_keys:
+            st.write("**Metadata Keys:**")
+            for key in metadata_keys:
+                st.write(f"• `{key}`")
+        
+        if stream_keys:
+            st.write("**Write Streams:**")
+            for key in stream_keys:
+                st.write(f"• `{key}`")
+        
+        if other_keys:
+            st.write("**Other Keys:**")
+            for key in other_keys:
+                st.write(f"• `{key}`")
+
+
 def handle_auto_refresh():
     """Handle auto-refresh functionality"""
     if st.session_state.auto_refresh:
@@ -535,11 +723,12 @@ def main():
     render_sidebar()
     
     # Main content tabs
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📈 Status Overview", 
         "🔍 Data Explorer", 
         "🗃️ SQL Interface", 
-        "✏️ Write Operations"
+        "✏️ Write Operations",
+        "🗄️ Redis Cache"
     ])
     
     with tab1:
@@ -553,6 +742,9 @@ def main():
     
     with tab4:
         render_write_operations()
+    
+    with tab5:
+        render_redis_explorer()
     
     # Footer
     st.divider()
