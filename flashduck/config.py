@@ -40,7 +40,8 @@ class Config:
             self.table_primary_keys = {
                 "users": "id",
                 "products": "id", 
-                "orders": "order_id"
+                "orders": "order_id",
+                "flights": 'FL_DATE'
             }
     
     @classmethod

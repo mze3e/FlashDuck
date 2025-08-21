@@ -9,6 +9,7 @@ import pandas as pd
 from datetime import datetime
 import os
 import sys
+import importlib
 
 # Add parent directory to path to import flashduck
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -75,6 +76,15 @@ def render_sidebar():
     
     # Manual refresh button
     if st.sidebar.button("🔄 Refresh Now", use_container_width=True):
+        st.rerun()
+
+    if st.sidebar.button("🛠️ Reset Engine", use_container_width=True):
+        for module in sys.modules.values():
+            try:
+                importlib.reload(module)
+            except Exception as e: 
+                pass
+        st.session_state.engine = None
         st.rerun()
     
     # Force cache refresh
