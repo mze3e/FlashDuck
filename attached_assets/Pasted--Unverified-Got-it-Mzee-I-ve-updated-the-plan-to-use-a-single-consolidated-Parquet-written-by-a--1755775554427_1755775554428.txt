@@ -1,0 +1,79 @@
+
+[Unverified] Got it, Mzee. I’ve updated the plan to use a single consolidated Parquet written by a background task every time the Redis cache refreshes (filename-list change). Please confirm the spec below before I write code.
+
+✅ Revised Feature Plan (awaiting your confirmation)
+
+A) Storage & Source of Truth
+	•	Authoritative data: your shared-folder “DB” where raw files live (you may still create/remove files manually).
+	•	Derived state:
+	1.	Redis cache: holds the current table snapshot (for fast, in-memory reads).
+	2.	Consolidated Parquet file: single file written atomically on cache refresh.
+
+B) Change Detection (unchanged logic)
+	•	Background Cache Refresher polls folder with scandir/glob.
+	•	Only if the filename list changes (create/delete/rename) → rebuild the in-memory snapshot and:
+	•	Update Redis cache (overwrites the whole snapshot).
+	•	Write one Parquet file for the whole table (see D).
+
+C) DuckDB Query Path (as you asked)
+	•	DuckDB reads from Redis on SELECT (not from disk).
+	•	Load snapshot bytes from Redis → convert to Arrow → duckdb.from_arrow() → run SQL.
+	•	(The disk Parquet is for durability/export; not on the hot query path.)
+
+D) Consolidated Parquet Writer (new)
+	•	A background task subscribed to “cache updated” events:
+	•	Pulls the entire current snapshot from Redis.
+	•	Writes one Parquet file (e.g., ./shared_db/{table}.parquet) using PyArrow.
+	•	Atomic replace: write .{tmp} then os.replace() to avoid partial reads.
+	•	Compression: configurable (zstd default).
+	•	Optional schema evolution: union fields and pad missing columns with nulls.
+
+E) Write Flow (no row-parquet writes)
+	•	App clients do not touch row files.
+	•	They enqueue write-intents to Redis Streams (upsert/delete).
+	•	Worker applies to your folder DB in whatever raw format it needs; refresher sees list-change, rebuilds Redis snapshot, then Parquet Writer emits the single parquet.
+
+F) Snapshot Format in Redis (for DuckDB)
+	•	Fast mode (recommended): store a single Arrow IPC (Feather) or Parquet buffer in Redis as a binary String.
+	•	Pros: minimal round-trips; fast DuckDB ingestion.
+	•	Simple mode: store rows as JSON/Hashes (ok for tiny demos).
+
+G) Interfaces
+	•	CLI helpers:
+	•	enqueue_upsert(table, id, payload)
+	•	enqueue_delete(table, id)
+	•	sql(table, "SELECT ...") → returns JSON/CSV.
+	•	Optional HTTP (later): POST /upsert, POST /delete, POST /sql.
+
+H) Safety & Ops
+	•	Read-only SQL (block writes/DDL).
+	•	Idempotent writes with op IDs.
+	•	Consumer group on Streams.
+	•	Metrics/logs: refresh count, snapshot bytes, parquet write success, stream lag.
+	•	Config via env: TABLE, DB_ROOT, REDIS_URL, SCAN_INTERVAL_SEC, SNAPSHOT_FORMAT=[arrow|parquet], PARQUET_COMPRESSION=[zstd|snappy|none].
+
+I) Replit Demo Flow
+	1.	Start Redis.
+	2.	Seed shared_db/ with a couple of test files (your format).
+	3.	Run workers: refresher → updates Redis → parquet writer emits {table}.parquet.
+	4.	Use CLI to enqueue_upsert/delete and run sql(...).
+	5.	Manually add/remove a file → see Redis snapshot + parquet regenerate; SQL reads updated state from Redis.
+
+⸻
+
+Decisions to Confirm (so I code it right)
+	1.	Redis snapshot format for DuckDB:
+	•	☐ Arrow IPC (Feather stream) (fastest, default)
+	•	☐ Parquet bytes
+	•	☐ JSON (only if you insist)
+	2.	Consolidated Parquet path & compression:
+	•	File path: ./shared_db/{table}.parquet (OK?)
+	•	Compression: ☐ zstd (default) ☐ snappy ☐ none
+	3.	Refresh cadence:
+	•	☐ Write consolidated parquet on every cache refresh (default)
+	•	☐ Debounce (e.g., at most 1 write per N seconds) — if yes, N = ___
+	4.	SQL output format:
+	•	☐ JSON (default) ☐ CSV ☐ Arrow IPC bytes
+	5.	Schema evolution policy when files differ in columns:
+	•	☐ Union all columns, fill missing with nulls (default)
+	•	☐ Fail on mismatch
