@@ -1,8 +1,8 @@
-# DuckRedis
+# FlashDuck Documentation
 
 ## Overview
 
-DuckRedis is a high-performance data management system that combines DuckDB's analytical SQL capabilities with Redis caching for real-time data access. The system monitors file system changes in a shared directory, maintains synchronized Redis cache snapshots, and provides SQL querying through DuckDB while generating consolidated Parquet exports for persistence.
+FlashDuck is a high-performance data management system that combines DuckDB's analytical SQL capabilities with Redis caching for real-time data access. The system monitors file system changes in a shared directory, maintains synchronized Redis cache snapshots, and provides SQL querying through DuckDB while generating consolidated Parquet exports for persistence.
 
 ## User Preferences
 
@@ -12,7 +12,7 @@ Preferred communication style: Simple, everyday language.
 
 ### Core Components
 
-**Engine Orchestration**: The DuckRedisEngine serves as the main coordinator, managing background threads for file monitoring, cache updates, and Parquet generation. It implements a pub/sub pattern where file changes trigger cache updates, which in turn trigger Parquet writes.
+**Engine Orchestration**: The FlashDuckEngine serves as the main coordinator, managing background threads for file monitoring, cache updates, and Parquet generation. It implements a pub/sub pattern where file changes trigger cache updates, which in turn trigger Parquet writes.
 
 **File System Monitoring**: A background FileMonitor continuously scans the source directory for file changes (creates, deletes, renames) and rebuilds the complete dataset snapshot when changes are detected. This avoids expensive file-by-file watching and instead relies on periodic scans with filename comparison.
 

@@ -1,5 +1,5 @@
 """
-Setup script for DuckRedis package
+Setup script for FlashDuck package
 """
 
 from setuptools import setup, find_packages
@@ -8,14 +8,14 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="duckredis",
+    name="flashduck",
     version="0.1.0",
-    author="DuckRedis Contributors",
-    author_email="contact@duckredis.org",
+    author="FlashDuck Contributors",
+    author_email="ahmedmzl@gmail.com",
     description="High-performance data management combining DuckDB and Redis",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/duckredis/duckredis",
+    url="https://github.com/mze3e/flashduck",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 3 - Alpha",
@@ -53,7 +53,7 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "duckredis=duckredis.cli:cli",
+            "flashduck=flashduck.cli:cli",
         ],
     },
     include_package_data=True,

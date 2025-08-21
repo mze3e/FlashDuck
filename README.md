@@ -1,10 +1,25 @@
-# DuckRedis
+# 🚀 FlashDuck: Real-Time Data Sync & Query Engine
+## ⚡ Flash-fast sync. Duck-simple queries.
 
-![DuckRedis Logo](https://via.placeholder.com/200x100/FF6B6B/FFFFFF?text=DuckRedis)
+![FlashDuck Logo](https://via.placeholder.com/200x100/FF6B6B/FFFFFF?text=FlashDuck)
 
 **High-performance data management combining DuckDB and Redis**
 
-DuckRedis is a Python package that provides a powerful data management solution by combining the analytical capabilities of DuckDB with the high-performance caching of Redis. It features real-time file monitoring, automatic cache updates, SQL querying, and consolidated Parquet export.
+FlashDuck is a cutting-edge data management solution that combines the speed of Redis with the analytical power of DuckDB. It allows you to keep your data fresh and query it instantly, making it ideal for real-time applications and analytics.
+
+FlashDuck combines the in-memory speed of Redis with the analytical power of DuckDB, giving you a seamless way to synchronize data and query it instantly.
+
+Real-time sync: Folder-based or application-level changes are streamed into Redis, keeping your cache always current.
+
+Single-file Parquet consolidation: Updates are automatically consolidated into a clean Parquet file for durability and downstream use.
+
+In-memory queries: DuckDB runs SQL directly against Redis-stored snapshots, so you get sub-second analytics without waiting for batch ETL.
+
+Lightweight & embeddable: Runs anywhere—no heavy cluster setup. Perfect for edge, cloud, or local development.
+
+Flexible integration: Use it as a cache, an analytics engine, or both. Ingest via Redis Streams, query with standard SQL, export with Parquet.
+
+FlashDuck is designed for developers, analysts, and teams who want the freshness of Redis and the analytical depth of DuckDB—without the overhead of a full data warehouse or lakehouse.
 
 ## 🚀 Features
 
@@ -18,4 +33,10 @@ DuckRedis is a Python package that provides a powerful data management solution 
 - **Streamlit Demo**: Interactive web interface showcasing all features
 
 ## 🏗️ Architecture
+![Architecture Diagram](https://via.placeholder.com/800x400/FF6B6B/FFFFFF?text=FlashDuck+Architecture+Diagram)
 
+## 📦 Installation
+
+```bash
+pip install flashduck
+```

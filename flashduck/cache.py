@@ -1,5 +1,5 @@
 """
-Redis cache management for DuckRedis
+Redis cache management for FlashDuck
 """
 
 import json

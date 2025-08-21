@@ -1,5 +1,5 @@
 """
-Core DuckRedis engine that orchestrates all components
+Core FlashDuck engine that orchestrates all components
 """
 
 import logging
@@ -13,8 +13,8 @@ from .file_monitor import FileMonitor
 from .utils import setup_logging
 
 
-class DuckRedisEngine:
-    """Main engine that coordinates all DuckRedis components"""
+class FlashDuckEngine:
+    """Main engine that coordinates all FlashDuck components"""
     
     def __init__(self, config: Optional[Config] = None):
         # Setup configuration
@@ -23,7 +23,7 @@ class DuckRedisEngine:
         
         # Setup logging
         self.logger = setup_logging()
-        self.logger.info(f"Initializing DuckRedis engine for table: {self.config.table_name}")
+        self.logger.info(f"Initializing FlashDuck engine for table: {self.config.table_name}")
         
         # Initialize components
         self.cache_manager = CacheManager(self.config)
@@ -52,7 +52,7 @@ class DuckRedisEngine:
             if not self.cache_manager.is_connected():
                 raise RuntimeError("Cannot connect to Redis")
             
-            self.logger.info("Starting DuckRedis engine...")
+            self.logger.info("Starting FlashDuck engine...")
             
             # Create sample data if requested
             if create_sample_data:
@@ -66,7 +66,7 @@ class DuckRedisEngine:
                 self._parquet_thread = self.parquet_writer.start_background_writer()
             
             self._running = True
-            self.logger.info("DuckRedis engine started successfully")
+            self.logger.info("FlashDuck engine started successfully")
             
         except Exception as e:
             self.logger.error(f"Failed to start engine: {e}")
@@ -78,7 +78,7 @@ class DuckRedisEngine:
         if not self._running:
             return
         
-        self.logger.info("Stopping DuckRedis engine...")
+        self.logger.info("Stopping FlashDuck engine...")
         
         # Stop monitoring
         self.file_monitor.stop_monitoring()
@@ -92,7 +92,7 @@ class DuckRedisEngine:
             self._parquet_thread.join(timeout=5)
         
         self._running = False
-        self.logger.info("DuckRedis engine stopped")
+        self.logger.info("FlashDuck engine stopped")
     
     def is_running(self) -> bool:
         """Check if engine is running"""

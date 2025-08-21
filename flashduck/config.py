@@ -1,5 +1,5 @@
 """
-Configuration management for DuckRedis
+Configuration management for FlashDuck
 """
 
 import os
@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 @dataclass
 class Config:
-    """Configuration settings for DuckRedis"""
+    """Configuration settings for FlashDuck"""
     
     # Core settings
     table_name: str = "default_table"

@@ -1,5 +1,5 @@
 """
-Utility functions for DuckRedis
+Utility functions for FlashDuck
 """
 
 import os
@@ -19,7 +19,7 @@ def setup_logging(level: str = "INFO") -> logging.Logger:
         level=getattr(logging, level.upper()),
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-    return logging.getLogger('duckredis')
+    return logging.getLogger('flashduck')
 
 
 def ensure_directory(path: str) -> None:

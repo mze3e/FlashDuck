@@ -1,5 +1,5 @@
 """
-Streamlit demo interface for DuckRedis
+Streamlit demo interface for FlashDuck
 """
 
 import streamlit as st
@@ -8,13 +8,13 @@ import time
 import pandas as pd
 from datetime import datetime
 import os
-from duckredis import DuckRedisEngine, Config
-from duckredis.utils import format_bytes
+from flashduck import FlashDuckEngine, Config
+from flashduck.utils import format_bytes
 
 
 # Configure Streamlit page
 st.set_page_config(
-    page_title="DuckRedis Demo",
+    page_title="FlashDuck Demo",
     page_icon="🦆",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -30,17 +30,17 @@ if 'last_refresh' not in st.session_state:
 
 
 def get_engine():
-    """Get or create DuckRedis engine"""
+    """Get or create FlashDuck engine"""
     if st.session_state.engine is None:
         config = Config.from_env()
-        st.session_state.engine = DuckRedisEngine(config)
+        st.session_state.engine = FlashDuckEngine(config)
         
         # Start engine with sample data if not running
         if not st.session_state.engine.is_running():
             try:
                 st.session_state.engine.start(create_sample_data=True)
             except Exception as e:
-                st.error(f"Failed to start DuckRedis engine: {e}")
+                st.error(f"Failed to start FlashDuck engine: {e}")
                 return None
     
     return st.session_state.engine
@@ -48,7 +48,7 @@ def get_engine():
 
 def render_header():
     """Render application header"""
-    st.title("🦆 DuckRedis Demo")
+    st.title("🦆 FlashDuck Demo")
     st.markdown("""
     **High-performance data management combining DuckDB and Redis**
     
@@ -116,7 +116,7 @@ def render_status_overview():
     
     engine = get_engine()
     if not engine:
-        st.error("DuckRedis engine not available")
+        st.error("FlashDuck engine not available")
         return
     
     status = engine.get_status()
@@ -217,7 +217,7 @@ def render_data_explorer():
     
     engine = get_engine()
     if not engine:
-        st.error("DuckRedis engine not available")
+        st.error("FlashDuck engine not available")
         return
     
     # Get table info
@@ -296,7 +296,7 @@ def render_sql_interface():
     
     engine = get_engine()
     if not engine:
-        st.error("DuckRedis engine not available")
+        st.error("FlashDuck engine not available")
         return
     
     # Query input
@@ -391,7 +391,7 @@ def render_write_operations():
     
     engine = get_engine()
     if not engine:
-        st.error("DuckRedis engine not available")
+        st.error("FlashDuck engine not available")
         return
     
     st.info("💡 Write operations are queued in Redis Streams for processing by background workers.")
@@ -503,7 +503,7 @@ def main():
     st.divider()
     st.markdown("""
     <div style='text-align: center; color: #666; font-size: 0.8em;'>
-        🦆 DuckRedis v0.1.0 - High-performance data management with DuckDB and Redis
+        🦆 FlashDuck v0.1.0 - High-performance data management with DuckDB and Redis
     </div>
     """, unsafe_allow_html=True)
 

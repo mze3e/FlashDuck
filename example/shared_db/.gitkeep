@@ -1,4 +1,4 @@
-# This directory contains the shared database files for DuckRedis
+# This directory contains the shared database files for FlashDuck
 # 
 # JSON files placed in this directory will be automatically monitored
 # and loaded into the Redis cache for DuckDB querying.

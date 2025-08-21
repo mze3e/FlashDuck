@@ -1,5 +1,5 @@
 """
-DuckDB query engine for DuckRedis
+DuckDB query engine for FlashDuck
 """
 
 import json

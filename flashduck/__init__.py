@@ -1,8 +1,8 @@
 """
-DuckRedis: High-performance data management combining DuckDB and Redis
+FlashDuck: High-performance data management combining DuckDB and Redis
 """
 
-from .core import DuckRedisEngine
+from .core import FlashDuckEngine
 from .cache import CacheManager
 from .query import QueryEngine
 from .parquet_writer import ParquetWriter
@@ -10,11 +10,11 @@ from .file_monitor import FileMonitor
 from .config import Config
 
 __version__ = "0.1.0"
-__author__ = "DuckRedis Contributors"
-__email__ = "contact@duckredis.org"
+__author__ = "FlashDuck Contributors"
+__email__ = "ahmedmzl@gmail.com"
 
 __all__ = [
-    "DuckRedisEngine",
+    "FlashDuckEngine",
     "CacheManager", 
     "QueryEngine",
     "ParquetWriter",

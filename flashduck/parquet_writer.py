@@ -1,5 +1,5 @@
 """
-Parquet file writer for DuckRedis
+Parquet file writer for FlashDuck
 """
 
 import os

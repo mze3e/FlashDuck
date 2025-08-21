@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Convenience script to start the DuckRedis Streamlit demo
+Convenience script to start the FlashDuck Streamlit demo
 """
 
 import os
@@ -34,7 +34,7 @@ def start_redis_if_needed():
     try:
         # Try to start Redis with Docker
         subprocess.run([
-            'docker', 'run', '-d', '--name', 'duckredis-redis',
+            'docker', 'run', '-d', '--name', 'flashduck-redis',
             '-p', '6379:6379', 'redis:alpine'
         ], check=True, capture_output=True)
         
@@ -82,12 +82,12 @@ def setup_environment():
 
 def main():
     """Main entry point"""
-    print("🦆 DuckRedis Demo Launcher")
+    print("🦆 FlashDuck Demo Launcher")
     print("=" * 50)
     
     # Check if we're in the right directory
     if not Path('app.py').exists():
-        print("❌ app.py not found. Please run this script from the DuckRedis root directory.")
+        print("❌ app.py not found. Please run this script from the FlashDuck root directory.")
         sys.exit(1)
     
     # Setup environment
@@ -108,7 +108,7 @@ def main():
     try:
         # Run Streamlit with proper configuration
         subprocess.run([
-            sys.executable, '-m', 'streamlit', 'run', 'app.py',
+            sys.executable, '-m', 'streamlit', 'run', 'example/app.py',
             '--server.port', '5000',
             '--server.address', '0.0.0.0',
             '--server.headless', 'true'

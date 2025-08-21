@@ -1,12 +1,12 @@
 """
-Command line interface for DuckRedis
+Command line interface for FlashDuck
 """
 
 import json
 import click
 import sys
 from typing import Dict, Any
-from .core import DuckRedisEngine
+from .core import FlashDuckEngine
 from .config import Config
 
 
@@ -17,7 +17,7 @@ from .config import Config
 @click.option('--verbose', '-v', is_flag=True, help='Verbose logging')
 @click.pass_context
 def cli(ctx, table, db_root, redis_url, verbose):
-    """DuckRedis CLI - High-performance data management with DuckDB and Redis"""
+    """FlashDuck CLI - High-performance data management with DuckDB and Redis"""
     # Create config
     config = Config(
         table_name=table,
@@ -34,12 +34,12 @@ def cli(ctx, table, db_root, redis_url, verbose):
 @cli.command()
 @click.pass_context
 def start(ctx):
-    """Start the DuckRedis engine"""
+    """Start the FlashDuck engine"""
     config = ctx.obj['config']
     
     try:
-        with DuckRedisEngine(config) as engine:
-            click.echo(f"✅ DuckRedis engine started for table: {config.table_name}")
+        with FlashDuckEngine(config) as engine:
+            click.echo(f"✅ FlashDuck engine started for table: {config.table_name}")
             click.echo(f"📁 Database root: {config.db_root}")
             click.echo(f"🔗 Redis URL: {config.redis_url}")
             click.echo("Press Ctrl+C to stop...")
@@ -67,7 +67,7 @@ def sql(ctx, query, output_format):
     config = ctx.obj['config']
     
     try:
-        engine = DuckRedisEngine(config)
+        engine = FlashDuckEngine(config)
         result = engine.sql(query)
         
         if not result['success']:
@@ -103,11 +103,11 @@ def status(ctx):
     config = ctx.obj['config']
     
     try:
-        engine = DuckRedisEngine(config)
+        engine = FlashDuckEngine(config)
         status = engine.get_status()
         
         # Format status output
-        click.echo("🔍 DuckRedis Status")
+        click.echo("🔍 FlashDuck Status")
         click.echo("=" * 50)
         
         # Engine status
@@ -162,7 +162,7 @@ def upsert(ctx, record_id, data):
             click.echo(f"❌ Invalid JSON data: {e}", err=True)
             sys.exit(1)
         
-        engine = DuckRedisEngine(config)
+        engine = FlashDuckEngine(config)
         message_id = engine.enqueue_upsert(record_id, data_dict)
         
         click.echo(f"✅ Upsert enqueued: {message_id}")
@@ -181,7 +181,7 @@ def delete(ctx, record_id):
     config = ctx.obj['config']
     
     try:
-        engine = DuckRedisEngine(config)
+        engine = FlashDuckEngine(config)
         message_id = engine.enqueue_delete(record_id)
         
         click.echo(f"✅ Delete enqueued: {message_id}")
@@ -199,7 +199,7 @@ def refresh(ctx):
     config = ctx.obj['config']
     
     try:
-        engine = DuckRedisEngine(config)
+        engine = FlashDuckEngine(config)
         success = engine.force_refresh()
         
         if success:
@@ -225,7 +225,7 @@ def sample(ctx):
     config = ctx.obj['config']
     
     try:
-        engine = DuckRedisEngine(config)
+        engine = FlashDuckEngine(config)
         result = engine.get_sample_data(10)
         
         if not result['success']:
@@ -252,7 +252,7 @@ def export(ctx):
     config = ctx.obj['config']
     
     try:
-        engine = DuckRedisEngine(config)
+        engine = FlashDuckEngine(config)
         success = engine.write_parquet()
         
         if success:

@@ -1,5 +1,5 @@
 """
-File system monitoring for DuckRedis
+File system monitoring for FlashDuck
 """
 
 import os
