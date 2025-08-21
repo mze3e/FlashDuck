@@ -810,6 +810,188 @@ def render_redis_explorer():
                 st.write(f"• `{key}`")
 
 
+def render_parquet_files():
+    """Render parquet files explorer interface"""
+    st.subheader("📁 Parquet Files")
+    
+    engine = get_engine()
+    if not engine:
+        st.error("FlashDuck engine not available")
+        return
+    
+    st.info("💡 View all Parquet files in the monitored directory with metadata and preview capabilities")
+    
+    try:
+        # Get file information
+        file_info = engine.file_monitor.get_file_info()
+        
+        if "error" in file_info:
+            st.error(f"❌ Error getting file info: {file_info['error']}")
+            return
+        
+        # Show directory info
+        st.write(f"**Monitored Directory:** `{file_info['directory']}`")
+        st.write(f"**File Format:** `{file_info.get('file_format', 'parquet')}`")
+        
+        files = file_info.get("files", [])
+        
+        if not files:
+            st.warning("No Parquet files found in the monitored directory")
+            return
+        
+        st.write(f"**Found {len(files)} Parquet files:**")
+        
+        # Create a DataFrame for better display
+        files_data = []
+        for file in files:
+            # Get file size in human readable format
+            size_bytes = file.get("size_bytes", 0)
+            if size_bytes > 1024 * 1024:
+                size_display = f"{size_bytes / (1024 * 1024):.2f} MB"
+            elif size_bytes > 1024:
+                size_display = f"{size_bytes / 1024:.2f} KB"
+            else:
+                size_display = f"{size_bytes} bytes"
+            
+            # Format modified time
+            import datetime
+            modified_time = file.get("modified_time", 0)
+            if modified_time:
+                modified_display = datetime.datetime.fromtimestamp(modified_time).strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                modified_display = "Unknown"
+            
+            files_data.append({
+                "File Name": file.get("name", ""),
+                "Size": size_display,
+                "Modified": modified_display,
+                "Path": file.get("path", "")
+            })
+        
+        files_df = pd.DataFrame(files_data)
+        
+        # Display files table
+        st.dataframe(files_df, use_container_width=True)
+        
+        st.divider()
+        
+        # File preview section
+        st.write("**File Preview:**")
+        
+        # File selector for preview
+        file_names = [f["name"] for f in files]
+        selected_file = st.selectbox(
+            "Select a file to preview:",
+            file_names,
+            key="parquet_file_selector"
+        )
+        
+        if selected_file:
+            try:
+                # Get table name (remove .parquet extension)
+                table_name = selected_file.replace(".parquet", "")
+                
+                # Load data preview
+                preview_df = engine.cache_manager.load_table_snapshot(table_name)
+                
+                if preview_df is not None and not preview_df.empty:
+                    # File details
+                    selected_file_info = next(f for f in files if f["name"] == selected_file)
+                    
+                    # Show file metadata
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Rows", len(preview_df))
+                    with col2:
+                        st.metric("Columns", len(preview_df.columns))
+                    with col3:
+                        st.metric("File Size", f"{selected_file_info.get('size_bytes', 0) / 1024:.1f} KB")
+                    with col4:
+                        primary_key = engine.config.table_primary_keys.get(table_name, "N/A")
+                        st.metric("Primary Key", primary_key)
+                    
+                    # Data preview
+                    st.write(f"**Data Preview (first 20 rows):**")
+                    preview_data = preview_df.head(20)
+                    st.dataframe(preview_data, use_container_width=True)
+                    
+                    # Column information
+                    with st.expander("📊 Column Information", expanded=False):
+                        col_info = []
+                        for col in preview_df.columns:
+                            dtype = str(preview_df[col].dtype)
+                            null_count = preview_df[col].isnull().sum()
+                            unique_count = preview_df[col].nunique()
+                            
+                            col_info.append({
+                                "Column": col,
+                                "Data Type": dtype,
+                                "Non-null Count": len(preview_df) - null_count,
+                                "Unique Values": unique_count,
+                                "Sample Value": str(preview_df[col].iloc[0]) if len(preview_df) > 0 else "N/A"
+                            })
+                        
+                        col_df = pd.DataFrame(col_info)
+                        st.dataframe(col_df, use_container_width=True)
+                    
+                    # Raw parquet file info (if available)
+                    with st.expander("🔍 Raw Parquet Metadata", expanded=False):
+                        try:
+                            import pyarrow.parquet as pq
+                            from pathlib import Path
+                            
+                            file_path = Path(file_info['directory']) / selected_file
+                            if file_path.exists():
+                                parquet_file = pq.ParquetFile(file_path)
+                                metadata = parquet_file.metadata
+                                
+                                st.write(f"**Schema Version:** {parquet_file.schema_arrow}")
+                                st.write(f"**Number of Row Groups:** {metadata.num_row_groups}")
+                                st.write(f"**Total Rows:** {metadata.num_rows}")
+                                st.write(f"**Serialized Size:** {metadata.serialized_size} bytes")
+                                
+                                # Column statistics
+                                st.write("**Column Statistics:**")
+                                for i in range(metadata.num_columns):
+                                    col_meta = metadata.row_group(0).column(i)
+                                    st.write(f"• {col_meta.path_in_schema}: {col_meta.statistics}")
+                            else:
+                                st.warning("Parquet file not found for detailed metadata")
+                                
+                        except Exception as meta_e:
+                            st.warning(f"Could not load raw Parquet metadata: {meta_e}")
+                
+                else:
+                    st.warning(f"No data found for file: {selected_file}")
+                    
+            except Exception as e:
+                st.error(f"❌ Error previewing file '{selected_file}': {e}")
+        
+        st.divider()
+        
+        # File operations
+        st.write("**File Operations:**")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("🔄 Refresh File List", use_container_width=True):
+                st.rerun()
+        
+        with col2:
+            if st.button("📊 Show Directory Stats", use_container_width=True):
+                total_size = sum(f.get("size_bytes", 0) for f in files)
+                total_size_mb = total_size / (1024 * 1024)
+                
+                st.success(f"📁 {len(files)} files, {total_size_mb:.2f} MB total")
+        
+        with col3:
+            if st.button("🗂️ Open Directory Info", use_container_width=True):
+                st.json(file_info)
+                
+    except Exception as e:
+        st.error(f"❌ Error loading Parquet files: {e}")
+
+
 def handle_auto_refresh():
     """Handle auto-refresh functionality"""
     if st.session_state.auto_refresh:
@@ -829,12 +1011,13 @@ def main():
     render_sidebar()
     
     # Main content tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📈 Status Overview", 
         "🔍 Data Explorer", 
         "🗃️ SQL Interface", 
         "✏️ Write Operations",
-        "🗄️ Redis Cache"
+        "🗄️ Redis Cache",
+        "📁 Parquet Files"
     ])
     
     with tab1:
@@ -851,6 +1034,9 @@ def main():
     
     with tab5:
         render_redis_explorer()
+    
+    with tab6:
+        render_parquet_files()
     
     # Footer
     st.divider()
