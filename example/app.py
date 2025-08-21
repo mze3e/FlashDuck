@@ -441,7 +441,7 @@ def render_sql_interface():
 
 
 def render_write_operations():
-    """Render write operations interface"""
+    """Render write operations interface with data editor"""
     st.subheader("✏️ Write Operations")
     
     engine = get_engine()
@@ -449,71 +449,177 @@ def render_write_operations():
         st.error("FlashDuck engine not available")
         return
     
-    st.info("💡 Write operations are queued in Redis Streams for processing by background workers.")
+    st.info("💡 Edit tables directly with the data editor. Add new rows or modify existing ones, then save changes to Parquet files.")
     
-    # Upsert operation
-    st.write("**Upsert Record:**")
+    # Table selector
+    available_tables = ["users", "products", "orders"]
+    selected_table = st.selectbox(
+        "Select table to edit:",
+        available_tables,
+        key="write_table_selector"
+    )
     
+    if selected_table:
+        try:
+            # Load current table data
+            current_df = engine.cache_manager.load_table_snapshot(selected_table)
+            
+            if current_df is None or current_df.empty:
+                st.warning(f"No data found for table '{selected_table}'. You can add new records below.")
+                # Create empty dataframe with proper schema
+                if selected_table == "users":
+                    current_df = pd.DataFrame(columns=["id", "name", "email", "age", "city", "active"])
+                elif selected_table == "products":
+                    current_df = pd.DataFrame(columns=["id", "name", "price", "category", "in_stock", "rating"])
+                elif selected_table == "orders":
+                    current_df = pd.DataFrame(columns=["order_id", "user_id", "product_id", "quantity", "total", "date", "status"])
+            else:
+                # Remove metadata columns for editing
+                display_df = current_df.drop(columns=['_source_file', '_modified_time'], errors='ignore')
+                current_df = display_df.copy()
+            
+            # Configure column types for data editor
+            column_config = {}
+            if selected_table == "users":
+                column_config = {
+                    "id": st.column_config.NumberColumn("ID", help="Unique user ID", min_value=1, step=1),
+                    "name": st.column_config.TextColumn("Name", help="Full name", max_chars=100),
+                    "email": st.column_config.TextColumn("Email", help="Email address"),
+                    "age": st.column_config.NumberColumn("Age", help="Age in years", min_value=1, max_value=120, step=1),
+                    "city": st.column_config.TextColumn("City", help="City of residence"),
+                    "active": st.column_config.CheckboxColumn("Active", help="User is active")
+                }
+            elif selected_table == "products":
+                column_config = {
+                    "id": st.column_config.NumberColumn("ID", help="Product ID", min_value=1, step=1),
+                    "name": st.column_config.TextColumn("Name", help="Product name", max_chars=100),
+                    "price": st.column_config.NumberColumn("Price", help="Product price", min_value=0.01, step=0.01, format="$%.2f"),
+                    "category": st.column_config.TextColumn("Category", help="Product category"),
+                    "in_stock": st.column_config.CheckboxColumn("In Stock", help="Available for purchase"),
+                    "rating": st.column_config.NumberColumn("Rating", help="Product rating", min_value=0.0, max_value=5.0, step=0.1)
+                }
+            elif selected_table == "orders":
+                column_config = {
+                    "order_id": st.column_config.NumberColumn("Order ID", help="Unique order ID", min_value=1, step=1),
+                    "user_id": st.column_config.NumberColumn("User ID", help="Customer ID", min_value=1, step=1),
+                    "product_id": st.column_config.NumberColumn("Product ID", help="Ordered product ID", min_value=1, step=1),
+                    "quantity": st.column_config.NumberColumn("Quantity", help="Number of items", min_value=1, step=1),
+                    "total": st.column_config.NumberColumn("Total", help="Order total", min_value=0.01, step=0.01, format="$%.2f"),
+                    "date": st.column_config.DateColumn("Date", help="Order date"),
+                    "status": st.column_config.SelectboxColumn("Status", help="Order status", 
+                                                             options=["pending", "processing", "shipped", "completed", "cancelled"])
+                }
+            
+            # Data editor
+            st.write(f"**Edit {selected_table.title()} Table:**")
+            edited_df = st.data_editor(
+                current_df,
+                column_config=column_config,
+                num_rows="dynamic",  # Allow adding new rows
+                use_container_width=True,
+                key=f"data_editor_{selected_table}"
+            )
+            
+            # Show primary key info
+            primary_key = engine.config.table_primary_keys.get(selected_table, "id")
+            st.info(f"🔑 Primary key: **{primary_key}** (duplicates will be deduplicated automatically)")
+            
+            # Save changes button
+            col1, col2, col3 = st.columns([2, 1, 1])
+            
+            with col1:
+                if st.button("💾 Save Changes to Parquet File", use_container_width=True):
+                    if edited_df.empty:
+                        st.warning("No data to save")
+                    else:
+                        try:
+                            # Convert edited DataFrame to records for update
+                            # Apply proper data types
+                            if selected_table == "users":
+                                edited_df["id"] = edited_df["id"].astype("int32")
+                                edited_df["age"] = edited_df["age"].astype("int32")  
+                                edited_df["active"] = edited_df["active"].astype("bool")
+                            elif selected_table == "products":
+                                edited_df["id"] = edited_df["id"].astype("int32")
+                                edited_df["price"] = edited_df["price"].astype("float64")
+                                edited_df["in_stock"] = edited_df["in_stock"].astype("bool")
+                                edited_df["rating"] = edited_df["rating"].astype("float32")
+                            elif selected_table == "orders":
+                                edited_df["order_id"] = edited_df["order_id"].astype("int32")
+                                edited_df["user_id"] = edited_df["user_id"].astype("int32")
+                                edited_df["product_id"] = edited_df["product_id"].astype("int32")
+                                edited_df["quantity"] = edited_df["quantity"].astype("int32")
+                                edited_df["total"] = edited_df["total"].astype("float64")
+                                if "date" in edited_df.columns:
+                                    edited_df["date"] = pd.to_datetime(edited_df["date"])
+                            
+                            records = edited_df.to_dict('records')
+                            success = engine.file_monitor.create_table_update(selected_table, records)
+                            
+                            if success:
+                                st.success(f"✅ Successfully saved {len(records)} records to {selected_table}.parquet!")
+                                st.rerun()  # Refresh to show updated data
+                            else:
+                                st.error("❌ Failed to save changes")
+                                
+                        except Exception as e:
+                            st.error(f"❌ Error saving changes: {e}")
+            
+            with col2:
+                if st.button("🔄 Refresh Data", use_container_width=True):
+                    st.rerun()
+                    
+            with col3:
+                if st.button("🗑️ Clear Table", use_container_width=True):
+                    st.warning("⚠️ This would clear all data - not implemented for safety")
+            
+            # Show data statistics
+            if not edited_df.empty:
+                st.divider()
+                stats_cols = st.columns(4)
+                with stats_cols[0]:
+                    st.metric("Total Rows", len(edited_df))
+                with stats_cols[1]:
+                    st.metric("Columns", len(edited_df.columns))
+                with stats_cols[2]:
+                    if primary_key in edited_df.columns:
+                        unique_keys = edited_df[primary_key].nunique()
+                        st.metric(f"Unique {primary_key}s", unique_keys)
+                with stats_cols[3]:
+                    # Check for duplicates
+                    if primary_key in edited_df.columns:
+                        duplicates = len(edited_df) - edited_df[primary_key].nunique()
+                        st.metric("Duplicates", duplicates)
+                        if duplicates > 0:
+                            st.warning(f"⚠️ {duplicates} duplicate {primary_key}(s) found - latest will be kept")
+            
+        except Exception as e:
+            st.error(f"❌ Error loading table data: {e}")
+            
+    st.divider()
+    
+    # Quick actions
+    st.write("**Quick Actions:**")
     col1, col2 = st.columns(2)
     
     with col1:
-        upsert_id = st.text_input("Record ID:", placeholder="e.g., user_123")
+        if st.button("🔄 Refresh All Tables", use_container_width=True):
+            try:
+                success = engine.file_monitor.force_refresh()
+                if success:
+                    st.success("✅ All tables refreshed from Parquet files")
+                else:
+                    st.error("❌ Failed to refresh tables")
+            except Exception as e:
+                st.error(f"❌ Error refreshing: {e}")
     
     with col2:
-        upsert_data = st.text_area(
-            "JSON Data:",
-            placeholder='{"name": "John Doe", "age": 30}',
-            height=100
-        )
-    
-    if st.button("📤 Queue Upsert", use_container_width=True):
-        if not upsert_id:
-            st.error("Please enter a record ID")
-        elif not upsert_data:
-            st.error("Please enter JSON data")
-        else:
+        if st.button("📊 Show File Info", use_container_width=True):
             try:
-                data_dict = json.loads(upsert_data)
-                message_id = engine.enqueue_upsert(upsert_id, data_dict)
-                st.success(f"✅ Upsert queued! Message ID: {message_id}")
-            except json.JSONDecodeError as e:
-                st.error(f"❌ Invalid JSON: {e}")
+                file_info = engine.file_monitor.get_file_info()
+                st.json(file_info)
             except Exception as e:
-                st.error(f"❌ Error: {e}")
-    
-    st.divider()
-    
-    # Delete operation
-    st.write("**Delete Record:**")
-    
-    delete_id = st.text_input("Record ID to Delete:", placeholder="e.g., user_123")
-    
-    if st.button("🗑️ Queue Delete", use_container_width=True):
-        if not delete_id:
-            st.error("Please enter a record ID")
-        else:
-            try:
-                message_id = engine.enqueue_delete(delete_id)
-                st.success(f"✅ Delete queued! Message ID: {message_id}")
-            except Exception as e:
-                st.error(f"❌ Error: {e}")
-    
-    st.divider()
-    
-    # Pending operations
-    st.write("**Pending Operations:**")
-    
-    if st.button("🔍 Check Pending Writes", use_container_width=True):
-        try:
-            writes = engine.consume_writes(count=50)
-            if writes:
-                st.write(f"Found {len(writes)} pending operations:")
-                writes_df = pd.DataFrame(writes)
-                st.dataframe(writes_df, use_container_width=True)
-            else:
-                st.info("No pending write operations")
-        except Exception as e:
-            st.error(f"❌ Error checking writes: {e}")
+                st.error(f"❌ Error getting file info: {e}")
 
 
 def render_redis_explorer():
