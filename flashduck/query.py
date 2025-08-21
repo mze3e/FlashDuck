@@ -132,12 +132,10 @@ class QueryEngine:
                     "data": []
                 }
             
-            # Union sample data from all tables with table name column
-            union_queries = []
-            for tname in table_names:
-                union_queries.append(f"SELECT '{tname}' as _table_name, * FROM {tname} LIMIT {max(1, limit // len(table_names))}")
-            
-            sql = " UNION ALL ".join(union_queries) + f" LIMIT {limit}"
+            # For "All Tables" view, just show first table with table info
+            # UNION ALL would fail due to different schemas across tables
+            first_table = table_names[0]
+            sql = f"SELECT '{first_table}' as _table_name, * FROM {first_table} LIMIT {limit}"
         
         return self.execute_sql(sql)
     
