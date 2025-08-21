@@ -696,23 +696,55 @@ def render_write_operations():
                                         changed_rows.append(null_key_rows)
                                         st.info(f"🆕 Found {len(null_key_rows)} new records with missing primary keys")
                                     
-                                    # Check existing records for changes
+                                    # Check existing records for changes with robust comparison
                                     modified_count = 0
                                     for key in existing_keys:
                                         edited_row = edited_df[edited_df[primary_key] == key].iloc[0]
                                         original_row = original_clean[original_clean[primary_key] == key].iloc[0]
                                         
-                                        # Compare row values (excluding primary key since it's the same)
+                                        # More robust comparison that handles data type differences
                                         row_changed = False
                                         for col in edited_df.columns:
                                             if col != primary_key and col in original_clean.columns:
-                                                if str(edited_row[col]) != str(original_row[col]):
-                                                    row_changed = True
+                                                # Normalize values for comparison
+                                                edited_val = edited_row[col]
+                                                original_val = original_row[col]
+                                                
+                                                # Handle NaN values
+                                                if pd.isna(edited_val) and pd.isna(original_val):
+                                                    continue  # Both NaN, no change
+                                                elif pd.isna(edited_val) or pd.isna(original_val):
+                                                    row_changed = True  # One NaN, one not
                                                     break
+                                                
+                                                # Normalize string representation for comparison
+                                                edited_str = str(edited_val).strip().lower()
+                                                original_str = str(original_val).strip().lower()
+                                                
+                                                # For boolean values, normalize
+                                                if edited_str in ['true', 'false'] and original_str in ['true', 'false']:
+                                                    if edited_str != original_str:
+                                                        row_changed = True
+                                                        break
+                                                # For numeric values, try numeric comparison
+                                                elif edited_str != original_str:
+                                                    try:
+                                                        if float(edited_val) != float(original_val):
+                                                            row_changed = True
+                                                            break
+                                                    except (ValueError, TypeError):
+                                                        # If not numeric, use string comparison
+                                                        if edited_str != original_str:
+                                                            row_changed = True
+                                                            break
                                         
                                         if row_changed:
                                             changed_rows.append(edited_df[edited_df[primary_key] == key])
                                             modified_count += 1
+                                            st.info(f"🔄 Record {key} was modified in column(s)")
+                                        else:
+                                            # Debug: show that record was unchanged
+                                            st.debug(f"📋 Record {key} unchanged")
                                     
                                     if modified_count > 0:
                                         st.info(f"✏️ Found {modified_count} modified records")
@@ -764,9 +796,19 @@ def render_write_operations():
                                     if "date" in changes_df.columns:
                                         changes_df["date"] = pd.to_datetime(changes_df["date"], errors='coerce')
                                 
-                                # Show data types for debugging
+                                # Show data types and records for debugging
                                 st.write(f"📋 Data types after conversion: {dict(changes_df.dtypes)}")
                                 st.write(f"📊 Records to save: {len(changes_df)} rows")
+                                
+                                # Show which specific records are being saved
+                                if primary_key in changes_df.columns:
+                                    saved_keys = changes_df[primary_key].tolist()
+                                    st.write(f"🔑 Primary keys being saved: {saved_keys}")
+                                
+                                # Show preview of records being saved
+                                if len(changes_df) <= 5:
+                                    st.write("📋 Preview of records to save:")
+                                    st.dataframe(changes_df, use_container_width=True)
                                 
                             except Exception as type_error:
                                 st.error(f"⚠️ Data type conversion error: {type_error}")
