@@ -350,14 +350,9 @@ class FileMonitor:
             if self.config.file_format == "parquet":
                 file_path = db_path / f"{table_name}.parquet"
                 
-                # If file exists, append records (allowing for primary key deduplication later)
-                if file_path.exists():
-                    existing_df = pd.read_parquet(file_path)
-                    # Combine existing and new records
-                    combined_df = pd.concat([existing_df, df], ignore_index=True)
-                    combined_df.to_parquet(file_path, compression=self.config.parquet_compression, index=False)
-                else:
-                    df.to_parquet(file_path, compression=self.config.parquet_compression, index=False)
+                # For Parquet, completely replace the file with new data
+                # This ensures updates work correctly and primary key deduplication happens
+                df.to_parquet(file_path, compression=self.config.parquet_compression, index=False)
             else:
                 file_path = db_path / f"{table_name}.json"
                 # For JSON, we'll overwrite for simplicity
@@ -368,7 +363,7 @@ class FileMonitor:
             
             self.logger.info(f"Updated table '{table_name}' with {len(records)} records")
             
-            # Trigger reload
+            # Trigger reload to refresh cache
             self.load_and_cache_data()
             
             return True
