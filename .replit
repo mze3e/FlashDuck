@@ -18,23 +18,11 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Streamlit App"
+args = "Redis Server"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Redis Server"
-
-[[workflows.workflow]]
-name = "Streamlit App"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "streamlit run app.py --server.port 5000"
-waitForPort = 5000
-
-[workflows.workflow.metadata]
-outputType = "webview"
+args = "FlashDuck Demo"
 
 [[workflows.workflow]]
 name = "Redis Server"
@@ -46,6 +34,18 @@ args = "redis-server --bind 0.0.0.0 --port 6379 --protected-mode no"
 
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow]]
+name = "FlashDuck Demo"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd example && PYTHONPATH=/home/runner/workspace:$PYTHONPATH STREAMLIT_DISABLE_EMAIL_OPT_IN=true streamlit run app.py --server.port 5000 --server.headless true"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
 
 [[ports]]
 localPort = 5000
