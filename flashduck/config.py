@@ -41,7 +41,7 @@ class Config:
                 "users": "id",
                 "products": "id", 
                 "orders": "order_id",
-                "flights": 'FL_DATE'
+                "flights": "flight_unique_id"  # Will be auto-generated composite key
             }
     
     @classmethod

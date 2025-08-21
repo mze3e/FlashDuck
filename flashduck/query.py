@@ -160,7 +160,7 @@ class QueryEngine:
                         WHERE rn = 1
                         """
                         try:
-                            conn.execute(ranked_sql, union_by_name=True)
+                            conn.execute(ranked_sql)
                             self.logger.debug(f"Created combined ranked view for table '{table_name}' from {len(partition_files)} partition files and {len(legacy_files)} legacy files")
                             print(f"Created ranked view for table '{table_name}' from {len(partition_files)} partition files")
                         except Exception as e:

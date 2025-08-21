@@ -120,6 +120,12 @@ class FileMonitor:
                             if '_modified_time' not in df.columns:
                                 df['_modified_time'] = file_path.stat().st_mtime
                             
+                            # For flights table, add unique identifier since FL_DATE is not unique
+                            if table_name == 'flights' and 'flight_unique_id' not in df.columns:
+                                # Create unique ID from row position and key columns
+                                df = df.reset_index(drop=True)
+                                df['flight_unique_id'] = df.index.astype(str) + '_' + df['FL_DATE'].astype(str) + '_' + df['DEP_TIME'].astype(str)
+                            
                             dataframes.append(df)
                     
                     if dataframes:
