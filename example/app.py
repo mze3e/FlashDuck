@@ -742,9 +742,7 @@ def render_write_operations():
                                             changed_rows.append(edited_df[edited_df[primary_key] == key])
                                             modified_count += 1
                                             st.info(f"🔄 Record {key} was modified in column(s)")
-                                        else:
-                                            # Debug: show that record was unchanged
-                                            st.debug(f"📋 Record {key} unchanged")
+                                        # (Record unchanged - no output needed for cleaner UI)
                                     
                                     if modified_count > 0:
                                         st.info(f"✏️ Found {modified_count} modified records")
