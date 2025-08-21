@@ -210,6 +210,63 @@ class CacheManager:
             self.logger.error(f"Failed to get last cache update time for table '{table_name}': {e}")
             return None
     
+    def store_table_snapshot_state(self, table_name: str, df: pd.DataFrame, state_id: str = "current") -> None:
+        """Store a snapshot state for comparison purposes"""
+        try:
+            snapshot_key = f"flashduck:snapshot_state:{table_name}:{state_id}"
+            
+            if self.config.snapshot_format == "arrow":
+                data = dataframe_to_arrow_ipc(df)
+            elif self.config.snapshot_format == "parquet":
+                data = dataframe_to_parquet_bytes(df, self.config.parquet_compression)
+            else:
+                data = df.to_json(orient='records').encode('utf-8')
+            
+            # Store with expiration (24 hours) to prevent accumulation
+            self.redis_client.setex(snapshot_key, 86400, data)
+            
+            # Store metadata
+            metadata_key = f"flashduck:snapshot_state_meta:{table_name}:{state_id}"
+            self.redis_client.hset(metadata_key, mapping={
+                "format": self.config.snapshot_format,
+                "rows": len(df),
+                "timestamp": pd.Timestamp.now().timestamp(),
+                "columns": json.dumps(list(df.columns))
+            })
+            self.redis_client.expire(metadata_key, 86400)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to store snapshot state for table '{table_name}', state '{state_id}': {e}")
+    
+    def load_table_snapshot_state(self, table_name: str, state_id: str = "current") -> Optional[pd.DataFrame]:
+        """Load a snapshot state for comparison purposes"""
+        try:
+            snapshot_key = f"flashduck:snapshot_state:{table_name}:{state_id}"
+            metadata_key = f"flashduck:snapshot_state_meta:{table_name}:{state_id}"
+            
+            data = self.redis_client.get(snapshot_key)
+            metadata = self.redis_client.hgetall(metadata_key)
+            
+            if not data or not metadata:
+                return None
+            
+            format_type = metadata.get(b'format', b'').decode('utf-8')
+            
+            if format_type == "arrow":
+                df = arrow_ipc_to_dataframe(data)
+            elif format_type == "parquet":
+                import pyarrow.parquet as pq
+                import io
+                df = pq.read_table(io.BytesIO(data)).to_pandas()
+            else:
+                df = pd.read_json(data.decode('utf-8'), orient='records')
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Failed to load snapshot state for table '{table_name}', state '{state_id}': {e}")
+            return None
+    
     def load_table_snapshot(self, table_name: str) -> Optional[pd.DataFrame]:
         """Load DataFrame snapshot for a specific table from Redis"""
         try:

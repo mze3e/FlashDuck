@@ -15,6 +15,168 @@ from .cache import CacheManager
 from .utils import load_json_files, merge_schemas
 
 
+class CacheComparator:
+    """Compares cache snapshots to identify precise changes for delta partition files"""
+    
+    def __init__(self, config: Config, cache_manager: CacheManager):
+        self.config = config
+        self.cache_manager = cache_manager
+        self.logger = logging.getLogger(__name__ + ".CacheComparator")
+    
+    def compare_table_snapshots(self, table_name: str, primary_key: str = None) -> Dict[str, Any]:
+        """Compare current table snapshot with previous state and return changes"""
+        try:
+            if primary_key is None:
+                primary_key = self.config.table_primary_keys.get(table_name, 'id')
+            
+            # Load current and previous snapshots
+            current_df = self.cache_manager.load_table_snapshot(table_name)
+            previous_df = self.cache_manager.load_table_snapshot_state(table_name, "previous")
+            
+            if current_df is None or current_df.empty:
+                return {
+                    "has_changes": False,
+                    "added": pd.DataFrame(),
+                    "modified": pd.DataFrame(),
+                    "deleted": pd.DataFrame(),
+                    "unchanged": pd.DataFrame(),
+                    "summary": "No current data"
+                }
+            
+            # Clean dataframes for comparison (remove metadata columns)
+            current_clean = current_df.drop(columns=['_source_file', '_modified_time'], errors='ignore')
+            
+            if previous_df is None or previous_df.empty:
+                # No previous state, everything is new
+                return {
+                    "has_changes": True,
+                    "added": current_clean.copy(),
+                    "modified": pd.DataFrame(),
+                    "deleted": pd.DataFrame(),
+                    "unchanged": pd.DataFrame(),
+                    "summary": f"All {len(current_clean)} records are new"
+                }
+            
+            previous_clean = previous_df.drop(columns=['_source_file', '_modified_time'], errors='ignore')
+            
+            # Ensure both dataframes have the same columns for comparison
+            all_columns = list(set(current_clean.columns) | set(previous_clean.columns))
+            for col in all_columns:
+                if col not in current_clean.columns:
+                    current_clean[col] = None
+                if col not in previous_clean.columns:
+                    previous_clean[col] = None
+            
+            # Reorder columns to match
+            current_clean = current_clean[all_columns]
+            previous_clean = previous_clean[all_columns]
+            
+            # Identify changes based on primary key
+            if primary_key not in current_clean.columns:
+                # No primary key available, treat as all new
+                return {
+                    "has_changes": True,
+                    "added": current_clean.copy(),
+                    "modified": pd.DataFrame(),
+                    "deleted": pd.DataFrame(),
+                    "unchanged": pd.DataFrame(),
+                    "summary": f"No primary key '{primary_key}' found, treating all {len(current_clean)} records as new"
+                }
+            
+            # Get sets of primary keys
+            current_keys = set(current_clean[primary_key].values)
+            previous_keys = set(previous_clean[primary_key].values) if primary_key in previous_clean.columns else set()
+            
+            # Identify added, deleted, and potentially modified records
+            added_keys = current_keys - previous_keys
+            deleted_keys = previous_keys - current_keys
+            common_keys = current_keys & previous_keys
+            
+            # Extract added records
+            added_records = current_clean[current_clean[primary_key].isin(added_keys)] if added_keys else pd.DataFrame()
+            
+            # Extract deleted records  
+            deleted_records = previous_clean[previous_clean[primary_key].isin(deleted_keys)] if deleted_keys else pd.DataFrame()
+            
+            # Check for modifications in common records
+            modified_records = []
+            unchanged_records = []
+            
+            for key in common_keys:
+                current_record = current_clean[current_clean[primary_key] == key].iloc[0]
+                previous_record = previous_clean[previous_clean[primary_key] == key].iloc[0]
+                
+                # Compare all values (convert to string for comparison to handle different data types)
+                record_changed = False
+                for col in all_columns:
+                    if col != primary_key:  # Skip primary key in comparison
+                        current_val = str(current_record[col]) if pd.notna(current_record[col]) else ""
+                        previous_val = str(previous_record[col]) if pd.notna(previous_record[col]) else ""
+                        if current_val != previous_val:
+                            record_changed = True
+                            break
+                
+                if record_changed:
+                    modified_records.append(current_record)
+                else:
+                    unchanged_records.append(current_record)
+            
+            modified_df = pd.DataFrame(modified_records) if modified_records else pd.DataFrame()
+            unchanged_df = pd.DataFrame(unchanged_records) if unchanged_records else pd.DataFrame()
+            
+            # Calculate summary
+            has_changes = len(added_records) > 0 or len(modified_df) > 0 or len(deleted_records) > 0
+            summary_parts = []
+            if len(added_records) > 0:
+                summary_parts.append(f"{len(added_records)} added")
+            if len(modified_df) > 0:
+                summary_parts.append(f"{len(modified_df)} modified")
+            if len(deleted_records) > 0:
+                summary_parts.append(f"{len(deleted_records)} deleted")
+            if not summary_parts:
+                summary_parts.append("no changes")
+            
+            summary = f"Changes detected: {', '.join(summary_parts)}"
+            
+            return {
+                "has_changes": has_changes,
+                "added": added_records,
+                "modified": modified_df,
+                "deleted": deleted_records,
+                "unchanged": unchanged_df,
+                "summary": summary,
+                "stats": {
+                    "added_count": len(added_records),
+                    "modified_count": len(modified_df),
+                    "deleted_count": len(deleted_records),
+                    "unchanged_count": len(unchanged_df)
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Failed to compare snapshots for table '{table_name}': {e}")
+            return {
+                "has_changes": False,
+                "added": pd.DataFrame(),
+                "modified": pd.DataFrame(),
+                "deleted": pd.DataFrame(),
+                "unchanged": pd.DataFrame(),
+                "summary": f"Comparison failed: {str(e)}"
+            }
+    
+    def update_previous_snapshot(self, table_name: str) -> bool:
+        """Update the previous snapshot to current state"""
+        try:
+            current_df = self.cache_manager.load_table_snapshot(table_name)
+            if current_df is not None and not current_df.empty:
+                self.cache_manager.store_table_snapshot_state(table_name, current_df, "previous")
+                return True
+            return False
+        except Exception as e:
+            self.logger.error(f"Failed to update previous snapshot for table '{table_name}': {e}")
+            return False
+
+
 class FileMonitor:
     """Monitors file system changes and updates cache"""
     
@@ -432,9 +594,11 @@ class BackgroundPartitionWriter:
         self.config = config
         self.cache_manager = cache_manager
         self.logger = logging.getLogger(__name__ + ".PartitionWriter")
+        self.comparator = CacheComparator(config, cache_manager)
         
         self._stop_event = threading.Event()
         self._write_callbacks: List[Callable] = []
+        self._batch_counter = 0
         
         # Ensure DB root directory exists
         Path(config.db_root).mkdir(parents=True, exist_ok=True)
@@ -452,7 +616,7 @@ class BackgroundPartitionWriter:
                 self.logger.error(f"Write callback failed: {e}")
     
     def write_cache_changes_to_partitions(self) -> bool:
-        """Write cache changes to partition files for all updated tables"""
+        """Write cache changes to partition files for all updated tables using precise comparison"""
         try:
             updated_tables = self.cache_manager.get_cache_updated_tables()
             
@@ -460,45 +624,62 @@ class BackgroundPartitionWriter:
                 return True  # No changes to write
             
             write_success = True
+            self._batch_counter += 1
             
             for table_name in updated_tables:
                 try:
-                    # Get current table snapshot from cache
-                    df = self.cache_manager.load_table_snapshot(table_name)
-                    
-                    if df is None or df.empty:
-                        self.logger.warning(f"No data in cache for table '{table_name}', skipping")
-                        self.cache_manager.clear_cache_updated_flag(table_name)
-                        continue
-                    
                     # Get the primary key for this table
                     primary_key = self.config.table_primary_keys.get(table_name, 'id')
                     
-                    # Get timestamp of last cache update
-                    last_update_time = self.cache_manager.get_last_cache_update_time(table_name)
+                    # Compare current cache state with previous snapshot
+                    comparison = self.comparator.compare_table_snapshots(table_name, primary_key)
                     
-                    # Find records that have been updated recently
-                    if '_modified_time' in df.columns and last_update_time:
-                        # Only write records that were modified since last partition write
-                        # Add a small buffer (1 second) to account for timing differences
-                        buffer_time = last_update_time - 1.0
-                        recent_records = df[df['_modified_time'] >= buffer_time]
-                    else:
-                        # No timing info available, write all records
-                        recent_records = df.copy()
-                    
-                    if recent_records.empty:
-                        self.logger.info(f"No recent changes found for table '{table_name}', skipping partition write")
+                    if not comparison["has_changes"]:
+                        self.logger.info(f"No actual changes detected for table '{table_name}': {comparison['summary']}")
                         self.cache_manager.clear_cache_updated_flag(table_name)
                         continue
                     
-                    # Remove metadata columns for partition file
-                    partition_df = recent_records.drop(columns=['_source_file'], errors='ignore')
+                    self.logger.info(f"Table '{table_name}' - {comparison['summary']}")
                     
-                    # Create partitioned filename with timestamp
+                    # Combine added and modified records for the partition file
+                    records_to_write = []
+                    
+                    # Add new records
+                    if not comparison["added"].empty:
+                        added_records = comparison["added"].copy()
+                        added_records['_change_type'] = 'ADDED'
+                        added_records['_batch_id'] = self._batch_counter
+                        added_records['_batch_timestamp'] = pd.Timestamp.now().timestamp()
+                        records_to_write.append(added_records)
+                    
+                    # Add modified records
+                    if not comparison["modified"].empty:
+                        modified_records = comparison["modified"].copy()
+                        modified_records['_change_type'] = 'MODIFIED'
+                        modified_records['_batch_id'] = self._batch_counter
+                        modified_records['_batch_timestamp'] = pd.Timestamp.now().timestamp()
+                        records_to_write.append(modified_records)
+                    
+                    # Optionally add deleted records (marked as such)
+                    if not comparison["deleted"].empty:
+                        deleted_records = comparison["deleted"].copy()
+                        deleted_records['_change_type'] = 'DELETED'
+                        deleted_records['_batch_id'] = self._batch_counter
+                        deleted_records['_batch_timestamp'] = pd.Timestamp.now().timestamp()
+                        records_to_write.append(deleted_records)
+                    
+                    if not records_to_write:
+                        self.logger.info(f"No records to write for table '{table_name}'")
+                        self.cache_manager.clear_cache_updated_flag(table_name)
+                        continue
+                    
+                    # Combine all change types into single DataFrame
+                    partition_df = pd.concat(records_to_write, ignore_index=True)
+                    
+                    # Create batch partition filename with change tracking
                     from datetime import datetime
-                    timestamp_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S-%f")[:-3]  # Remove last 3 microsecond digits
-                    partition_filename = f"{table_name}_partition_{timestamp_str}.parquet"
+                    timestamp_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S-%f")[:-3]
+                    partition_filename = f"{table_name}_batch_{self._batch_counter}_{timestamp_str}.parquet"
                     
                     # Write partition file
                     db_path = Path(self.config.db_root)
@@ -508,20 +689,27 @@ class BackgroundPartitionWriter:
                         partition_df.to_parquet(file_path, compression=self.config.parquet_compression, index=False)
                     else:
                         # For JSON, still use partitioned approach
-                        partition_filename = f"{table_name}_partition_{timestamp_str}.json"
+                        partition_filename = f"{table_name}_batch_{self._batch_counter}_{timestamp_str}.json"
                         file_path = db_path / partition_filename
                         records_dict = partition_df.to_dict('records')
                         import json
                         with open(file_path, 'w', encoding='utf-8') as f:
                             json.dump(records_dict, f, indent=2)
                     
-                    self.logger.info(f"Background wrote partition '{partition_filename}' with {len(partition_df)} records")
+                    self.logger.info(
+                        f"Batch {self._batch_counter}: Wrote partition '{partition_filename}' with {len(partition_df)} delta records "
+                        f"({comparison['stats']['added_count']} added, {comparison['stats']['modified_count']} modified, "
+                        f"{comparison['stats']['deleted_count']} deleted)"
+                    )
+                    
+                    # Update previous snapshot state for next comparison
+                    self.comparator.update_previous_snapshot(table_name)
                     
                     # Clear the update flag for this table
                     self.cache_manager.clear_cache_updated_flag(table_name)
                     
                 except Exception as e:
-                    self.logger.error(f"Failed to write partition for table '{table_name}': {e}")
+                    self.logger.error(f"Failed to write batch partition for table '{table_name}': {e}")
                     write_success = False
             
             # Notify callbacks that partitions were written
