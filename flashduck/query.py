@@ -125,31 +125,73 @@ class QueryEngine:
                 
                 # For each table, create a view with ranked deduplication
                 for table_name, files in table_files.items():
-                    # Create file pattern for DuckDB
-                    file_pattern = f"[{','.join(repr(f) for f in files)}]"
-                    
                     # Get primary key for this table
                     primary_key = self.config.table_primary_keys.get(table_name, 'id')
                     
-                    # Create ranked view with deduplication
-                    ranked_sql = f"""
-                    CREATE OR REPLACE VIEW {table_name} AS
-                    SELECT * FROM (
-                        SELECT *,
-                               ROW_NUMBER() OVER (PARTITION BY {primary_key} ORDER BY _modified_time DESC) as rn
-                        FROM read_parquet({file_pattern})
-                    ) ranked
-                    WHERE rn = 1
-                    """
+                    # Separate partition files from legacy files
+                    partition_files = [f for f in files if "_partition_" in f]
+                    legacy_files = [f for f in files if "_partition_" not in f]
                     
-                    try:
-                        conn.execute(ranked_sql)
-                        self.logger.debug(f"Created ranked view for table '{table_name}' from {len(files)} files")
-                    except Exception as e:
-                        # If ranking fails (e.g., no primary key column), use simple union
-                        union_sql = f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_parquet({file_pattern})"
-                        conn.execute(union_sql)
-                        self.logger.debug(f"Created simple view for table '{table_name}' from {len(files)} files")
+                    if partition_files:
+                        # If we have partition files, use them with ranking (they have _modified_time)
+                        partition_pattern = f"[{','.join(repr(f) for f in partition_files)}]"
+                        
+                        # Create ranked view with deduplication using only partition files
+                        ranked_sql = f"""
+                        CREATE OR REPLACE VIEW {table_name}_partitions AS
+                        SELECT * FROM (
+                            SELECT *,
+                                   ROW_NUMBER() OVER (PARTITION BY {primary_key} ORDER BY _modified_time DESC) as rn
+                            FROM read_parquet({partition_pattern})
+                        ) ranked
+                        WHERE rn = 1
+                        """
+                        
+                        # If we also have legacy files, combine them
+                        if legacy_files:
+                            legacy_pattern = f"[{','.join(repr(f) for f in legacy_files)}]"
+                            
+                            # Create combined view: latest from partitions + legacy records not in partitions
+                            combined_sql = f"""
+                            CREATE OR REPLACE VIEW {table_name} AS
+                            WITH partition_data AS (
+                                SELECT * FROM (
+                                    SELECT *,
+                                           ROW_NUMBER() OVER (PARTITION BY {primary_key} ORDER BY _modified_time DESC) as rn
+                                    FROM read_parquet({partition_pattern})
+                                ) ranked
+                                WHERE rn = 1
+                            ),
+                            legacy_data AS (
+                                SELECT *, 0.0 as _modified_time, 1 as rn
+                                FROM read_parquet({legacy_pattern})
+                                WHERE {primary_key} NOT IN (SELECT {primary_key} FROM partition_data)
+                            )
+                            SELECT * FROM partition_data
+                            UNION ALL
+                            SELECT * FROM legacy_data
+                            """
+                            
+                            try:
+                                conn.execute(combined_sql)
+                                self.logger.debug(f"Created combined ranked view for table '{table_name}' from {len(partition_files)} partition files and {len(legacy_files)} legacy files")
+                            except Exception as e:
+                                # Fallback to simple read of all files
+                                file_pattern = f"[{','.join(repr(f) for f in files)}]"
+                                union_sql = f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_parquet({file_pattern})"
+                                conn.execute(union_sql)
+                                self.logger.debug(f"Created simple view for table '{table_name}' from {len(files)} files (ranking failed: {e})")
+                        else:
+                            # Only partition files, rename the view
+                            conn.execute(f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM {table_name}_partitions")
+                            self.logger.debug(f"Created ranked view for table '{table_name}' from {len(partition_files)} partition files")
+                    
+                    elif legacy_files:
+                        # Only legacy files, no ranking possible
+                        legacy_pattern = f"[{','.join(repr(f) for f in legacy_files)}]"
+                        legacy_sql = f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_parquet({legacy_pattern})"
+                        conn.execute(legacy_sql)
+                        self.logger.debug(f"Created legacy view for table '{table_name}' from {len(legacy_files)} legacy files")
                 
                 # Execute the user's query
                 result = conn.execute(sql).fetchdf()
