@@ -744,15 +744,15 @@ def render_write_operations():
                                 if "date" in changes_df.columns:
                                     changes_df["date"] = pd.to_datetime(changes_df["date"])
                             
-                            # Update cache directly (background process will write partition files)
+                            # Only write the changed/new records
                             records = changes_df.to_dict('records')
-                            success = engine.cache_manager.update_table_records(selected_table, records)
+                            success = engine.file_monitor.create_table_update(selected_table, records)
                             
                             if success:
-                                st.success(f"✅ Successfully updated {len(records)} changed/new records in cache! Background process will write partition file.")
+                                st.success(f"✅ Successfully saved {len(records)} changed/new records to {selected_table} partition file!")
                                 st.rerun()  # Refresh to show updated data
                             else:
-                                st.error("❌ Failed to update cache")
+                                st.error("❌ Failed to save changes")
                                 
                         except Exception as e:
                             st.error(f"❌ Error saving changes: {e}")
