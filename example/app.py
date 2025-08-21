@@ -660,31 +660,96 @@ def render_write_operations():
                         st.warning("No data to save")
                     else:
                         try:
-                            # Convert edited DataFrame to records for update
-                            # Apply proper data types
-                            if selected_table == "users":
-                                edited_df["id"] = edited_df["id"].astype("int32")
-                                edited_df["age"] = edited_df["age"].astype("int32")  
-                                edited_df["active"] = edited_df["active"].astype("bool")
-                            elif selected_table == "products":
-                                edited_df["id"] = edited_df["id"].astype("int32")
-                                edited_df["price"] = edited_df["price"].astype("float64")
-                                edited_df["in_stock"] = edited_df["in_stock"].astype("bool")
-                                edited_df["rating"] = edited_df["rating"].astype("float32")
-                            elif selected_table == "orders":
-                                edited_df["order_id"] = edited_df["order_id"].astype("int32")
-                                edited_df["user_id"] = edited_df["user_id"].astype("int32")
-                                edited_df["product_id"] = edited_df["product_id"].astype("int32")
-                                edited_df["quantity"] = edited_df["quantity"].astype("int32")
-                                edited_df["total"] = edited_df["total"].astype("float64")
-                                if "date" in edited_df.columns:
-                                    edited_df["date"] = pd.to_datetime(edited_df["date"])
+                            # Get the original data to compare against
+                            original_df = engine.cache_manager.load_table_snapshot(selected_table)
                             
-                            records = edited_df.to_dict('records')
+                            if original_df is not None and not original_df.empty:
+                                # Remove metadata columns for comparison
+                                original_clean = original_df.drop(columns=['_source_file', '_modified_time'], errors='ignore')
+                                
+                                # Find only the changed/new rows
+                                primary_key = engine.config.table_primary_keys.get(selected_table, "id")
+                                
+                                if primary_key in edited_df.columns and primary_key in original_clean.columns:
+                                    # Create comparison sets for finding differences
+                                    edited_keys = set(edited_df[primary_key].values)
+                                    original_keys = set(original_clean[primary_key].values)
+                                    
+                                    # Find new records (keys that are in edited but not in original)
+                                    new_keys = edited_keys - original_keys
+                                    
+                                    # Find potentially changed records (keys that exist in both)
+                                    existing_keys = edited_keys & original_keys
+                                    
+                                    changed_rows = []
+                                    
+                                    # Add all new records
+                                    if new_keys:
+                                        new_rows = edited_df[edited_df[primary_key].isin(new_keys)]
+                                        changed_rows.append(new_rows)
+                                        st.info(f"🆕 Found {len(new_rows)} new records")
+                                    
+                                    # Check existing records for changes
+                                    modified_count = 0
+                                    for key in existing_keys:
+                                        edited_row = edited_df[edited_df[primary_key] == key].iloc[0]
+                                        original_row = original_clean[original_clean[primary_key] == key].iloc[0]
+                                        
+                                        # Compare row values (excluding primary key since it's the same)
+                                        row_changed = False
+                                        for col in edited_df.columns:
+                                            if col != primary_key and col in original_clean.columns:
+                                                if str(edited_row[col]) != str(original_row[col]):
+                                                    row_changed = True
+                                                    break
+                                        
+                                        if row_changed:
+                                            changed_rows.append(edited_df[edited_df[primary_key] == key])
+                                            modified_count += 1
+                                    
+                                    if modified_count > 0:
+                                        st.info(f"✏️ Found {modified_count} modified records")
+                                    
+                                    if changed_rows:
+                                        # Combine all changed rows
+                                        changes_df = pd.concat(changed_rows, ignore_index=True)
+                                    else:
+                                        st.info("ℹ️ No changes detected - nothing to save")
+                                        continue
+                                else:
+                                    # Fallback: if primary key comparison fails, save all data
+                                    st.warning("⚠️ Cannot determine changes, saving all data")
+                                    changes_df = edited_df.copy()
+                            else:
+                                # No original data, save everything as new
+                                st.info("🆕 No existing data found, saving all records as new")
+                                changes_df = edited_df.copy()
+                            
+                            # Apply proper data types to the changes
+                            if selected_table == "users":
+                                changes_df["id"] = changes_df["id"].astype("int32")
+                                changes_df["age"] = changes_df["age"].astype("int32")  
+                                changes_df["active"] = changes_df["active"].astype("bool")
+                            elif selected_table == "products":
+                                changes_df["id"] = changes_df["id"].astype("int32")
+                                changes_df["price"] = changes_df["price"].astype("float64")
+                                changes_df["in_stock"] = changes_df["in_stock"].astype("bool")
+                                changes_df["rating"] = changes_df["rating"].astype("float32")
+                            elif selected_table == "orders":
+                                changes_df["order_id"] = changes_df["order_id"].astype("int32")
+                                changes_df["user_id"] = changes_df["user_id"].astype("int32")
+                                changes_df["product_id"] = changes_df["product_id"].astype("int32")
+                                changes_df["quantity"] = changes_df["quantity"].astype("int32")
+                                changes_df["total"] = changes_df["total"].astype("float64")
+                                if "date" in changes_df.columns:
+                                    changes_df["date"] = pd.to_datetime(changes_df["date"])
+                            
+                            # Only write the changed/new records
+                            records = changes_df.to_dict('records')
                             success = engine.file_monitor.create_table_update(selected_table, records)
                             
                             if success:
-                                st.success(f"✅ Successfully saved {len(records)} records to {selected_table}.parquet!")
+                                st.success(f"✅ Successfully saved {len(records)} changed/new records to {selected_table} partition file!")
                                 st.rerun()  # Refresh to show updated data
                             else:
                                 st.error("❌ Failed to save changes")
