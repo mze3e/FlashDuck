@@ -672,8 +672,9 @@ def render_write_operations():
                                 
                                 if primary_key in edited_df.columns and primary_key in original_clean.columns:
                                     # Create comparison sets for finding differences
-                                    edited_keys = set(edited_df[primary_key].values)
-                                    original_keys = set(original_clean[primary_key].values)
+                                    # Handle NaN values by filtering them out
+                                    edited_keys = set(edited_df[primary_key].dropna().values)
+                                    original_keys = set(original_clean[primary_key].dropna().values)
                                     
                                     # Find new records (keys that are in edited but not in original)
                                     new_keys = edited_keys - original_keys
@@ -687,7 +688,13 @@ def render_write_operations():
                                     if new_keys:
                                         new_rows = edited_df[edited_df[primary_key].isin(new_keys)]
                                         changed_rows.append(new_rows)
-                                        st.info(f"🆕 Found {len(new_rows)} new records")
+                                        st.info(f"🆕 Found {len(new_rows)} new records: {list(new_keys)}")
+                                    
+                                    # Also check for rows with NaN/null primary keys (completely new rows from data_editor)
+                                    null_key_rows = edited_df[edited_df[primary_key].isna()]
+                                    if not null_key_rows.empty:
+                                        changed_rows.append(null_key_rows)
+                                        st.info(f"🆕 Found {len(null_key_rows)} new records with missing primary keys")
                                     
                                     # Check existing records for changes
                                     modified_count = 0
@@ -725,24 +732,46 @@ def render_write_operations():
                                 st.info("🆕 No existing data found, saving all records as new")
                                 changes_df = edited_df.copy()
                             
-                            # Apply proper data types to the changes
-                            if selected_table == "users":
-                                changes_df["id"] = changes_df["id"].astype("int32")
-                                changes_df["age"] = changes_df["age"].astype("int32")  
-                                changes_df["active"] = changes_df["active"].astype("bool")
-                            elif selected_table == "products":
-                                changes_df["id"] = changes_df["id"].astype("int32")
-                                changes_df["price"] = changes_df["price"].astype("float64")
-                                changes_df["in_stock"] = changes_df["in_stock"].astype("bool")
-                                changes_df["rating"] = changes_df["rating"].astype("float32")
-                            elif selected_table == "orders":
-                                changes_df["order_id"] = changes_df["order_id"].astype("int32")
-                                changes_df["user_id"] = changes_df["user_id"].astype("int32")
-                                changes_df["product_id"] = changes_df["product_id"].astype("int32")
-                                changes_df["quantity"] = changes_df["quantity"].astype("int32")
-                                changes_df["total"] = changes_df["total"].astype("float64")
-                                if "date" in changes_df.columns:
-                                    changes_df["date"] = pd.to_datetime(changes_df["date"])
+                            # Apply proper data types to the changes with error handling
+                            try:
+                                if selected_table == "users":
+                                    if "id" in changes_df.columns:
+                                        changes_df["id"] = pd.to_numeric(changes_df["id"], errors='coerce').astype("int32")
+                                    if "age" in changes_df.columns:
+                                        changes_df["age"] = pd.to_numeric(changes_df["age"], errors='coerce').astype("int32")
+                                    if "active" in changes_df.columns:
+                                        changes_df["active"] = changes_df["active"].astype("bool")
+                                elif selected_table == "products":
+                                    if "id" in changes_df.columns:
+                                        changes_df["id"] = pd.to_numeric(changes_df["id"], errors='coerce').astype("int32")
+                                    if "price" in changes_df.columns:
+                                        changes_df["price"] = pd.to_numeric(changes_df["price"], errors='coerce').astype("float64")
+                                    if "in_stock" in changes_df.columns:
+                                        changes_df["in_stock"] = changes_df["in_stock"].astype("bool")
+                                    if "rating" in changes_df.columns:
+                                        changes_df["rating"] = pd.to_numeric(changes_df["rating"], errors='coerce').astype("float32")
+                                elif selected_table == "orders":
+                                    if "order_id" in changes_df.columns:
+                                        changes_df["order_id"] = pd.to_numeric(changes_df["order_id"], errors='coerce').astype("int32")
+                                    if "user_id" in changes_df.columns:
+                                        changes_df["user_id"] = pd.to_numeric(changes_df["user_id"], errors='coerce').astype("int32")
+                                    if "product_id" in changes_df.columns:
+                                        changes_df["product_id"] = pd.to_numeric(changes_df["product_id"], errors='coerce').astype("int32")
+                                    if "quantity" in changes_df.columns:
+                                        changes_df["quantity"] = pd.to_numeric(changes_df["quantity"], errors='coerce').astype("int32")
+                                    if "total" in changes_df.columns:
+                                        changes_df["total"] = pd.to_numeric(changes_df["total"], errors='coerce').astype("float64")
+                                    if "date" in changes_df.columns:
+                                        changes_df["date"] = pd.to_datetime(changes_df["date"], errors='coerce')
+                                
+                                # Show data types for debugging
+                                st.write(f"📋 Data types after conversion: {dict(changes_df.dtypes)}")
+                                st.write(f"📊 Records to save: {len(changes_df)} rows")
+                                
+                            except Exception as type_error:
+                                st.error(f"⚠️ Data type conversion error: {type_error}")
+                                st.write("Using original data types...")
+                                # Continue with original types
                             
                             # Only write the changed/new records
                             records = changes_df.to_dict('records')
