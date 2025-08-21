@@ -19,9 +19,13 @@ class Config:
     # Monitoring settings
     scan_interval_sec: int = 5
     
-    # Data format settings
+    # Data format settings - now defaults to parquet for better type preservation
+    file_format: str = "parquet"  # parquet, json
     snapshot_format: str = "arrow"  # arrow, parquet, json
     parquet_compression: str = "zstd"  # zstd, snappy, none
+    
+    # Primary key configuration for each table
+    table_primary_keys: dict = None  # Will be set to default in __post_init__
     
     # Performance settings
     parquet_debounce_sec: Optional[int] = None
@@ -29,6 +33,15 @@ class Config:
     
     # Schema evolution
     schema_evolution: str = "union"  # union, strict
+    
+    def __post_init__(self):
+        """Set default values after initialization"""
+        if self.table_primary_keys is None:
+            self.table_primary_keys = {
+                "users": "id",
+                "products": "id", 
+                "orders": "order_id"
+            }
     
     @classmethod
     def from_env(cls) -> 'Config':
