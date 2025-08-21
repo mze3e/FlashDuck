@@ -9,7 +9,7 @@ from .config import Config
 from .cache import CacheManager
 from .query import QueryEngine
 from .parquet_writer import ParquetWriter
-from .file_monitor import FileMonitor
+from .file_monitor import FileMonitor, BackgroundPartitionWriter
 from .utils import setup_logging
 
 
@@ -30,8 +30,9 @@ class FlashDuckEngine:
         self.query_engine = QueryEngine(self.config, self.cache_manager)
         self.parquet_writer = ParquetWriter(self.config, self.cache_manager)
         self.file_monitor = FileMonitor(self.config, self.cache_manager)
+        self.background_partition_writer = BackgroundPartitionWriter(self.config, self.cache_manager)
         
-        # Connect parquet writer to cache updates
+        # Connect parquet writer to cache updates (for consolidated files)
         self.file_monitor.add_cache_update_callback(
             lambda: self.parquet_writer.write_parquet()
         )
@@ -39,6 +40,7 @@ class FlashDuckEngine:
         # Background threads
         self._monitor_thread: Optional[threading.Thread] = None
         self._parquet_thread: Optional[threading.Thread] = None
+        self._partition_writer_thread: Optional[threading.Thread] = None
         self._running = False
     
     def start(self, create_sample_data: bool = False) -> None:
@@ -65,6 +67,9 @@ class FlashDuckEngine:
             if self.config.parquet_debounce_sec is not None:
                 self._parquet_thread = self.parquet_writer.start_background_writer()
             
+            # Start background partition writer for cache-first updates
+            self._partition_writer_thread = self.background_partition_writer.start_background_writer()
+            
             self._running = True
             self.logger.info("FlashDuck engine started successfully")
             
@@ -83,6 +88,7 @@ class FlashDuckEngine:
         # Stop monitoring
         self.file_monitor.stop_monitoring()
         self.parquet_writer.stop_background_writer()
+        self.background_partition_writer.stop_background_writer()
         
         # Wait for threads to finish
         if self._monitor_thread and self._monitor_thread.is_alive():
@@ -90,6 +96,9 @@ class FlashDuckEngine:
         
         if self._parquet_thread and self._parquet_thread.is_alive():
             self._parquet_thread.join(timeout=5)
+        
+        if self._partition_writer_thread and self._partition_writer_thread.is_alive():
+            self._partition_writer_thread.join(timeout=5)
         
         self._running = False
         self.logger.info("FlashDuck engine stopped")

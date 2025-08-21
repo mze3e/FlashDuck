@@ -81,6 +81,135 @@ class CacheManager:
         """Store DataFrame snapshot in Redis (legacy method for backwards compatibility)"""
         self.store_table_snapshot(self.config.table_name, df)
     
+    def update_table_records(self, table_name: str, records: List[Dict[str, Any]], primary_key: str = None) -> bool:
+        """Update or insert records directly in cache for immediate access"""
+        try:
+            # Use configured primary key or default to 'id'
+            if primary_key is None:
+                primary_key = self.config.table_primary_keys.get(table_name, 'id')
+            
+            # Load current table snapshot
+            current_df = self.load_table_snapshot(table_name)
+            
+            # Create DataFrame from new records
+            new_df = pd.DataFrame(records)
+            if new_df.empty:
+                return True
+            
+            # Add metadata columns
+            if '_modified_time' not in new_df.columns:
+                new_df['_modified_time'] = pd.Timestamp.now().timestamp()
+            
+            if current_df is None or current_df.empty:
+                # No existing data, just store the new records
+                updated_df = new_df.copy()
+            else:
+                # Merge with existing data
+                if primary_key in current_df.columns and primary_key in new_df.columns:
+                    # Remove existing records that will be updated
+                    updated_keys = new_df[primary_key].tolist()
+                    current_df = current_df[~current_df[primary_key].isin(updated_keys)]
+                    
+                    # Combine old and new data
+                    updated_df = pd.concat([current_df, new_df], ignore_index=True)
+                    
+                    # Sort by modification time for consistency
+                    if '_modified_time' in updated_df.columns:
+                        updated_df = updated_df.sort_values('_modified_time', ascending=False)
+                else:
+                    # No primary key matching, just append
+                    updated_df = pd.concat([current_df, new_df], ignore_index=True)
+            
+            # Store updated snapshot
+            self.store_table_snapshot(table_name, updated_df)
+            
+            # Mark that cache has been updated (for background partition writing)
+            self._mark_cache_updated(table_name)
+            
+            self.logger.info(f"Updated {len(records)} records in cache for table '{table_name}'")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to update records in cache for table '{table_name}': {e}")
+            return False
+    
+    def delete_table_records(self, table_name: str, record_ids: List[Any], primary_key: str = None) -> bool:
+        """Delete records directly from cache"""
+        try:
+            # Use configured primary key or default to 'id'
+            if primary_key is None:
+                primary_key = self.config.table_primary_keys.get(table_name, 'id')
+            
+            # Load current table snapshot
+            current_df = self.load_table_snapshot(table_name)
+            
+            if current_df is None or current_df.empty:
+                self.logger.warning(f"No data found for table '{table_name}' to delete from")
+                return True
+            
+            if primary_key not in current_df.columns:
+                self.logger.error(f"Primary key '{primary_key}' not found in table '{table_name}'")
+                return False
+            
+            # Remove records with matching IDs
+            initial_count = len(current_df)
+            updated_df = current_df[~current_df[primary_key].isin(record_ids)]
+            deleted_count = initial_count - len(updated_df)
+            
+            if deleted_count > 0:
+                # Store updated snapshot
+                self.store_table_snapshot(table_name, updated_df)
+                self._mark_cache_updated(table_name)
+                self.logger.info(f"Deleted {deleted_count} records from cache for table '{table_name}'")
+            else:
+                self.logger.warning(f"No matching records found to delete from table '{table_name}'")
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to delete records from cache for table '{table_name}': {e}")
+            return False
+    
+    def _mark_cache_updated(self, table_name: str) -> None:
+        """Mark that cache has been updated for background partition writing"""
+        try:
+            # Store timestamp of last cache update per table
+            cache_update_key = f"flashduck:cache_updated:{table_name}"
+            self.redis_client.set(cache_update_key, pd.Timestamp.now().timestamp())
+            
+            # Also add to global set of updated tables
+            self.redis_client.sadd("flashduck:updated_tables", table_name)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to mark cache updated for table '{table_name}': {e}")
+    
+    def get_cache_updated_tables(self) -> List[str]:
+        """Get list of tables that have been updated in cache since last partition write"""
+        try:
+            members = self.redis_client.smembers("flashduck:updated_tables")
+            return [member.decode('utf-8') if isinstance(member, bytes) else member for member in members]
+        except Exception as e:
+            self.logger.error(f"Failed to get updated tables: {e}")
+            return []
+    
+    def clear_cache_updated_flag(self, table_name: str) -> None:
+        """Clear the cache updated flag after partition write"""
+        try:
+            self.redis_client.srem("flashduck:updated_tables", table_name)
+            self.redis_client.delete(f"flashduck:cache_updated:{table_name}")
+        except Exception as e:
+            self.logger.error(f"Failed to clear cache updated flag for table '{table_name}': {e}")
+    
+    def get_last_cache_update_time(self, table_name: str) -> Optional[float]:
+        """Get timestamp of last cache update for a table"""
+        try:
+            cache_update_key = f"flashduck:cache_updated:{table_name}"
+            timestamp = self.redis_client.get(cache_update_key)
+            return float(timestamp) if timestamp else None
+        except Exception as e:
+            self.logger.error(f"Failed to get last cache update time for table '{table_name}': {e}")
+            return None
+    
     def load_table_snapshot(self, table_name: str) -> Optional[pd.DataFrame]:
         """Load DataFrame snapshot for a specific table from Redis"""
         try:

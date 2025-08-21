@@ -423,3 +423,166 @@ class FileMonitor:
         except Exception as e:
             self.logger.error(f"Failed to create partition for table '{table_name}': {e}")
             return False
+
+
+class BackgroundPartitionWriter:
+    """Background writer that monitors cache changes and writes partition files"""
+    
+    def __init__(self, config: Config, cache_manager: CacheManager):
+        self.config = config
+        self.cache_manager = cache_manager
+        self.logger = logging.getLogger(__name__ + ".PartitionWriter")
+        
+        self._stop_event = threading.Event()
+        self._write_callbacks: List[Callable] = []
+        
+        # Ensure DB root directory exists
+        Path(config.db_root).mkdir(parents=True, exist_ok=True)
+    
+    def add_write_callback(self, callback: Callable) -> None:
+        """Add callback to be called after partition writes"""
+        self._write_callbacks.append(callback)
+    
+    def _notify_write_callbacks(self) -> None:
+        """Notify all callbacks that partition write occurred"""
+        for callback in self._write_callbacks:
+            try:
+                callback()
+            except Exception as e:
+                self.logger.error(f"Write callback failed: {e}")
+    
+    def write_cache_changes_to_partitions(self) -> bool:
+        """Write cache changes to partition files for all updated tables"""
+        try:
+            updated_tables = self.cache_manager.get_cache_updated_tables()
+            
+            if not updated_tables:
+                return True  # No changes to write
+            
+            write_success = True
+            
+            for table_name in updated_tables:
+                try:
+                    # Get current table snapshot from cache
+                    df = self.cache_manager.load_table_snapshot(table_name)
+                    
+                    if df is None or df.empty:
+                        self.logger.warning(f"No data in cache for table '{table_name}', skipping")
+                        self.cache_manager.clear_cache_updated_flag(table_name)
+                        continue
+                    
+                    # Get the primary key for this table
+                    primary_key = self.config.table_primary_keys.get(table_name, 'id')
+                    
+                    # Get timestamp of last cache update
+                    last_update_time = self.cache_manager.get_last_cache_update_time(table_name)
+                    
+                    # Find records that have been updated recently
+                    if '_modified_time' in df.columns and last_update_time:
+                        # Only write records that were modified since last partition write
+                        # Add a small buffer (1 second) to account for timing differences
+                        buffer_time = last_update_time - 1.0
+                        recent_records = df[df['_modified_time'] >= buffer_time]
+                    else:
+                        # No timing info available, write all records
+                        recent_records = df.copy()
+                    
+                    if recent_records.empty:
+                        self.logger.info(f"No recent changes found for table '{table_name}', skipping partition write")
+                        self.cache_manager.clear_cache_updated_flag(table_name)
+                        continue
+                    
+                    # Remove metadata columns for partition file
+                    partition_df = recent_records.drop(columns=['_source_file'], errors='ignore')
+                    
+                    # Create partitioned filename with timestamp
+                    from datetime import datetime
+                    timestamp_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S-%f")[:-3]  # Remove last 3 microsecond digits
+                    partition_filename = f"{table_name}_partition_{timestamp_str}.parquet"
+                    
+                    # Write partition file
+                    db_path = Path(self.config.db_root)
+                    file_path = db_path / partition_filename
+                    
+                    if self.config.file_format == "parquet":
+                        partition_df.to_parquet(file_path, compression=self.config.parquet_compression, index=False)
+                    else:
+                        # For JSON, still use partitioned approach
+                        partition_filename = f"{table_name}_partition_{timestamp_str}.json"
+                        file_path = db_path / partition_filename
+                        records_dict = partition_df.to_dict('records')
+                        import json
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            json.dump(records_dict, f, indent=2)
+                    
+                    self.logger.info(f"Background wrote partition '{partition_filename}' with {len(partition_df)} records")
+                    
+                    # Clear the update flag for this table
+                    self.cache_manager.clear_cache_updated_flag(table_name)
+                    
+                except Exception as e:
+                    self.logger.error(f"Failed to write partition for table '{table_name}': {e}")
+                    write_success = False
+            
+            # Notify callbacks that partitions were written
+            if updated_tables:
+                self._notify_write_callbacks()
+            
+            return write_success
+            
+        except Exception as e:
+            self.logger.error(f"Failed to write cache changes to partitions: {e}")
+            return False
+    
+    def start_background_writer(self, interval_sec: float = 5.0) -> threading.Thread:
+        """Start background partition writer"""
+        def writer_loop():
+            self.logger.info(f"Started background partition writer (interval: {interval_sec}s)")
+            
+            while not self._stop_event.is_set():
+                try:
+                    # Check for cache changes and write partitions
+                    self.write_cache_changes_to_partitions()
+                    
+                    # Wait before next check
+                    self._stop_event.wait(timeout=interval_sec)
+                    
+                except Exception as e:
+                    self.logger.error(f"Background partition writer error: {e}")
+                    self._stop_event.wait(timeout=5)  # Brief pause on error
+            
+            self.logger.info("Background partition writer stopped")
+        
+        thread = threading.Thread(target=writer_loop, daemon=True)
+        thread.start()
+        return thread
+    
+    def stop_background_writer(self) -> None:
+        """Stop background partition writer"""
+        self._stop_event.set()
+    
+    def force_write_all_tables(self) -> bool:
+        """Force write all cached tables to partition files"""
+        try:
+            table_names = self.cache_manager.get_table_names()
+            
+            if not table_names:
+                self.logger.info("No tables found in cache for forced write")
+                return True
+            
+            success = True
+            
+            for table_name in table_names:
+                try:
+                    # Mark table as updated to trigger partition write
+                    self.cache_manager._mark_cache_updated(table_name)
+                except Exception as e:
+                    self.logger.error(f"Failed to mark table '{table_name}' as updated: {e}")
+                    success = False
+            
+            # Now write all the marked tables
+            return self.write_cache_changes_to_partitions() and success
+            
+        except Exception as e:
+            self.logger.error(f"Failed to force write all tables: {e}")
+            return False
