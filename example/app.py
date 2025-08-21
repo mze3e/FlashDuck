@@ -8,6 +8,11 @@ import time
 import pandas as pd
 from datetime import datetime
 import os
+import sys
+
+# Add parent directory to path to import flashduck
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
 from flashduck import FlashDuckEngine, Config
 from flashduck.utils import format_bytes
 
