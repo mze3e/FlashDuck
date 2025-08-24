@@ -4,7 +4,7 @@ Core FlashDuck engine that orchestrates all components
 
 import logging
 import threading
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable
 from .config import Config
 from .cache import CacheManager
 from .query import QueryEngine
@@ -41,6 +41,8 @@ class FlashDuckEngine:
         # Background threads
         self._monitor_thread: Optional[threading.Thread] = None
         self._parquet_thread: Optional[threading.Thread] = None
+        self._pending_thread: Optional[threading.Thread] = None
+        self._pending_stop: Optional[threading.Event] = None
         self._running = False
     
     def start(self, create_sample_data: bool = False) -> None:
@@ -84,6 +86,7 @@ class FlashDuckEngine:
         # Stop monitoring
         self.file_monitor.stop_monitoring()
         self.parquet_writer.stop_background_writer()
+        self.stop_pending_sync()
         
         # Wait for threads to finish
         if self._monitor_thread and self._monitor_thread.is_alive():
@@ -151,6 +154,51 @@ class FlashDuckEngine:
     def enqueue_delete(self, record_id: str) -> str:
         """Apply delete and queue pending write"""
         return self.cache_manager.enqueue_delete(record_id)
+
+    def list_pending_writes(self) -> List[str]:
+        """List pending write Parquet files"""
+        return self.cache_manager.list_pending_writes()
+
+    def purge_pending_writes(self) -> int:
+        """Delete all pending write files"""
+        return self.cache_manager.purge_pending_writes()
+
+    def process_pending_writes(
+        self,
+        upload_fn: Optional[Callable[[str], None]] = None,
+        purge: bool = True,
+    ) -> List[str]:
+        """Upload and optionally purge pending writes"""
+        return self.cache_manager.process_pending_writes(upload_fn, purge)
+
+    def start_pending_sync(
+        self, upload_fn: Callable[[str], None], interval: int = 60
+    ) -> None:
+        """Start background job to sync pending writes"""
+        if self._pending_thread and self._pending_thread.is_alive():
+            self.logger.warning("Pending sync already running")
+            return
+
+        self._pending_stop = threading.Event()
+
+        def worker():
+            while not self._pending_stop.is_set():
+                try:
+                    self.cache_manager.process_pending_writes(upload_fn)
+                except Exception as e:
+                    self.logger.error(f"Pending sync error: {e}")
+                self._pending_stop.wait(interval)
+
+        self._pending_thread = threading.Thread(target=worker, daemon=True)
+        self._pending_thread.start()
+
+    def stop_pending_sync(self) -> None:
+        """Stop background pending sync job"""
+        if self._pending_stop:
+            self._pending_stop.set()
+        if self._pending_thread and self._pending_thread.is_alive():
+            self._pending_thread.join(timeout=5)
+        self._pending_thread = None
     
     def validate_query(self, sql: str) -> Dict[str, Any]:
         """Validate SQL query"""
