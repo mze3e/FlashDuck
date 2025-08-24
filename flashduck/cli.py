@@ -13,16 +13,14 @@ from .config import Config
 @click.group()
 @click.option('--table', default='default_table', help='Table name')
 @click.option('--db-root', default='./shared_db', help='Database root directory')
-@click.option('--redis-url', default='redis://localhost:6379', help='Redis URL')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose logging')
 @click.pass_context
-def cli(ctx, table, db_root, redis_url, verbose):
-    """FlashDuck CLI - High-performance data management with DuckDB and Redis"""
+def cli(ctx, table, db_root, verbose):
+    """FlashDuck CLI - High-performance data management with DuckDB"""
     # Create config
     config = Config(
         table_name=table,
         db_root=db_root,
-        redis_url=redis_url
     )
     
     # Setup context
@@ -41,7 +39,6 @@ def start(ctx):
         with FlashDuckEngine(config) as engine:
             click.echo(f"✅ FlashDuck engine started for table: {config.table_name}")
             click.echo(f"📁 Database root: {config.db_root}")
-            click.echo(f"🔗 Redis URL: {config.redis_url}")
             click.echo("Press Ctrl+C to stop...")
             
             # Keep running until interrupted
@@ -116,10 +113,6 @@ def status(ctx):
         click.echo(f"Table Name: {engine_status.get('table_name', 'N/A')}")
         click.echo(f"DB Root: {engine_status.get('db_root', 'N/A')}")
         
-        # Redis status
-        redis_status = status.get('redis', {})
-        click.echo(f"Redis Connected: {'✅' if redis_status.get('connected') else '❌'}")
-        
         # Cache status
         cache_status = status.get('cache', {})
         if cache_status:
@@ -163,9 +156,9 @@ def upsert(ctx, record_id, data):
             sys.exit(1)
         
         engine = FlashDuckEngine(config)
-        message_id = engine.enqueue_upsert(record_id, data_dict)
-        
-        click.echo(f"✅ Upsert enqueued: {message_id}")
+        file_path = engine.enqueue_upsert(record_id, data_dict)
+
+        click.echo(f"✅ Upsert written to: {file_path}")
         click.echo(f"Record ID: {record_id}")
         
     except Exception as e:
@@ -182,9 +175,9 @@ def delete(ctx, record_id):
     
     try:
         engine = FlashDuckEngine(config)
-        message_id = engine.enqueue_delete(record_id)
-        
-        click.echo(f"✅ Delete enqueued: {message_id}")
+        file_path = engine.enqueue_delete(record_id)
+
+        click.echo(f"✅ Delete written to: {file_path}")
         click.echo(f"Record ID: {record_id}")
         
     except Exception as e:

@@ -23,7 +23,9 @@ class FlashDuckEngine:
         
         # Setup logging
         self.logger = setup_logging()
-        self.logger.info(f"Initializing FlashDuck engine for table: {self.config.table_name}")
+        self.logger.info(
+            f"Initializing FlashDuck engine for table: {self.config.table_name}"
+        )
         
         # Initialize components
         self.cache_manager = CacheManager(self.config)
@@ -48,10 +50,9 @@ class FlashDuckEngine:
             return
         
         try:
-            # Check Redis connection
             if not self.cache_manager.is_connected():
-                raise RuntimeError("Cannot connect to Redis")
-            
+                raise RuntimeError("Cannot access DuckDB cache")
+
             self.logger.info("Starting FlashDuck engine...")
             
             # Create sample data if requested
@@ -107,10 +108,6 @@ class FlashDuckEngine:
                     "table_name": self.config.table_name,
                     "db_root": self.config.db_root
                 },
-                "redis": {
-                    "connected": self.cache_manager.is_connected(),
-                    "url": self.config.redis_url
-                },
                 "cache": self.cache_manager.get_snapshot_info(),
                 "files": self.file_monitor.get_file_info(),
                 "parquet": self.parquet_writer.get_parquet_info(),
@@ -148,16 +145,12 @@ class FlashDuckEngine:
         return self.parquet_writer.write_parquet(force=True)
     
     def enqueue_upsert(self, record_id: str, data: Dict[str, Any]) -> str:
-        """Enqueue upsert operation"""
-        return self.cache_manager.enqueue_write("upsert", record_id, data)
-    
+        """Apply upsert and queue pending write"""
+        return self.cache_manager.enqueue_upsert(record_id, data)
+
     def enqueue_delete(self, record_id: str) -> str:
-        """Enqueue delete operation"""
-        return self.cache_manager.enqueue_write("delete", record_id)
-    
-    def consume_writes(self, count: int = 10) -> List[Dict[str, Any]]:
-        """Consume pending write operations"""
-        return self.cache_manager.consume_writes(count=count)
+        """Apply delete and queue pending write"""
+        return self.cache_manager.enqueue_delete(record_id)
     
     def validate_query(self, sql: str) -> Dict[str, Any]:
         """Validate SQL query"""

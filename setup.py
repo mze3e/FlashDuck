@@ -12,7 +12,7 @@ setup(
     version="0.1.0",
     author="FlashDuck Contributors",
     author_email="ahmedmzl@gmail.com",
-    description="High-performance data management combining DuckDB and Redis",
+    description="High-performance data management using DuckDB",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/mze3e/flashduck",
@@ -32,7 +32,6 @@ setup(
     ],
     python_requires=">=3.8",
     install_requires=[
-        "redis>=4.0.0",
         "duckdb>=0.8.0",
         "pandas>=1.3.0",
         "pyarrow>=8.0.0",
