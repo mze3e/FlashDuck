@@ -14,7 +14,6 @@ class Config:
     # Core settings
     table_name: str = "default_table"
     db_root: str = "./shared_db"
-    redis_url: str = "redis://localhost:6379"
     
     # Monitoring settings
     scan_interval_sec: int = 5
@@ -50,7 +49,6 @@ class Config:
         return cls(
             table_name=os.getenv("TABLE", "default_table"),
             db_root=os.getenv("DB_ROOT", "./shared_db"),
-            redis_url=os.getenv("REDIS_URL", "redis://localhost:6379"),
             scan_interval_sec=int(os.getenv("SCAN_INTERVAL_SEC", "5")),
             snapshot_format=os.getenv("SNAPSHOT_FORMAT", "arrow"),
             parquet_compression=os.getenv("PARQUET_COMPRESSION", "zstd"),

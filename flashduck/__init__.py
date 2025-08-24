@@ -1,6 +1,4 @@
-"""
-FlashDuck: High-performance data management combining DuckDB and Redis
-"""
+"""FlashDuck: High-performance data management using DuckDB."""
 
 from .core import FlashDuckEngine
 from .cache import CacheManager
@@ -15,9 +13,9 @@ __email__ = "ahmedmzl@gmail.com"
 
 __all__ = [
     "FlashDuckEngine",
-    "CacheManager", 
+    "CacheManager",
     "QueryEngine",
     "ParquetWriter",
     "FileMonitor",
-    "Config"
+    "Config",
 ]
