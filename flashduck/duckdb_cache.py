@@ -16,7 +16,7 @@ class DuckDBCache:
 
     def __init__(self, config: Config, cache_db_path: Optional[str] = None):
         self.config = config
-        self.cache_db_path = cache_db_path or os.path.join(config.db_root, "cache.duckdb")
+        self.cache_db_path = cache_db_path or config.cache_db_path
         os.makedirs(os.path.dirname(self.cache_db_path), exist_ok=True)
 
         self.conn = duckdb.connect(self.cache_db_path)
@@ -54,8 +54,8 @@ class DuckDBCache:
         )
 
     def _write_pending(self, table_name: str, df: pd.DataFrame, op: str) -> str:
-        """Write changed rows to pending_writes/ directory as Parquet."""
-        pending_dir = os.path.join(self.config.db_root, "pending_writes")
+        """Write changed rows to the configured pending_writes_dir as Parquet."""
+        pending_dir = self.config.pending_writes_dir
         os.makedirs(pending_dir, exist_ok=True)
         filename = f"{table_name}_{int(time.time()*1000)}_{op}.parquet"
         path = os.path.join(pending_dir, filename)
