@@ -13,18 +13,16 @@ from .config import Config
 @click.group()
 @click.option('--table', default='default_table', help='Table name')
 @click.option('--db-root', default='./shared_db', help='Database root directory')
-@click.option('--cache-db', default=None, help='Path to DuckDB cache file')
 @click.option('--pending-writes', default=None,
               help='Directory for pending Parquet writes')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose logging')
 @click.pass_context
-def cli(ctx, table, db_root, cache_db, pending_writes, verbose):
+def cli(ctx, table, db_root, pending_writes, verbose):
     """FlashDuck CLI - High-performance data management with DuckDB"""
     # Create config
     config = Config(
         table_name=table,
         db_root=db_root,
-        cache_db_path=cache_db,
         pending_writes_dir=pending_writes,
     )
     

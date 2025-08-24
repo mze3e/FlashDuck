@@ -17,7 +17,6 @@ class Config:
     # Core settings
     table_name: str = "default_table"
     db_root: str = "./shared_db"
-    cache_db_path: Optional[str] = None  # Path to DuckDB cache file
     pending_writes_dir: Optional[str] = None  # Directory for incremental Parquet writes
     
     # Monitoring settings
@@ -46,8 +45,6 @@ class Config:
 
         self._load_table_primary_keys()
 
-        if self.cache_db_path is None:
-            self.cache_db_path = os.path.join(self.db_root, "cache.duckdb")
         if self.pending_writes_dir is None:
             self.pending_writes_dir = os.path.join(self.db_root, "pending_writes")
 
@@ -81,7 +78,6 @@ class Config:
         return cls(
             table_name=os.getenv("TABLE", "default_table"),
             db_root=os.getenv("DB_ROOT", "./shared_db"),
-            cache_db_path=os.getenv("CACHE_DB_PATH"),
             pending_writes_dir=os.getenv("PENDING_WRITES_DIR"),
             scan_interval_sec=int(os.getenv("SCAN_INTERVAL_SEC", "5")),
             snapshot_format=os.getenv("SNAPSHOT_FORMAT", "arrow"),
@@ -105,9 +101,6 @@ class Config:
         
         if self.schema_evolution not in ["union", "strict"]:
             raise ValueError(f"Invalid schema_evolution: {self.schema_evolution}")
-
-        if not self.cache_db_path:
-            raise ValueError("cache_db_path must be set")
 
         if not self.pending_writes_dir:
             raise ValueError("pending_writes_dir must be set")
