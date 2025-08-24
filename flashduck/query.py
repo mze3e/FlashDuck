@@ -5,8 +5,7 @@ DuckDB query engine for FlashDuck
 from datetime import datetime
 import json
 import logging
-import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict
 import duckdb
 import pandas as pd
 from .cache import CacheManager
@@ -21,6 +20,8 @@ class QueryEngine:
         self.config = config
         self.cache_manager = cache_manager
         self.logger = logging.getLogger(__name__)
+        # Maintain a read-only connection to the DuckDB cache database
+        self.conn = duckdb.connect(self.cache_manager.cache_db_path, read_only=True)
     
     def execute_sql(self, sql: str) -> Dict[str, Any]:
         """Execute SQL query and return results"""
@@ -30,9 +31,8 @@ class QueryEngine:
             # Validate SQL is read-only
             validate_sql_readonly(sql)
             validate_time = datetime.now() - start_time
-            # Load all tables from cache
-            tables = self.cache_manager.get_all_tables()
-            if not tables:
+            available_tables = self.cache_manager.get_table_names()
+            if not available_tables:
                 return {
                     "success": False,
                     "error": "No tables available in cache",
@@ -40,48 +40,34 @@ class QueryEngine:
                     "columns": [],
                     "data": []
                 }
-            
-            # Execute query with DuckDB
-            conn = duckdb.connect()
-            conn_establish_time = datetime.now() - start_time
-            try:
-                # Register tables referenced in the SQL query using a case-insensitive match
-                sql_lower = sql.lower()
-                for table_name, df in tables.items():
-                    pattern = rf"\b{re.escape(table_name.lower())}\b"
-                    if re.search(pattern, sql_lower):
-                        conn.register(table_name, df)
-                register_time = datetime.now() - start_time
-                # Execute query
-                result = conn.execute(sql).fetchdf()
-                run_time = datetime.now() - start_time
 
-                # Format output based on configuration
-                if self.config.sql_output_format == "json":
-                    data = result.to_dict('records')
-                elif self.config.sql_output_format == "csv":
-                    data = result.to_csv(index=False)
-                elif self.config.sql_output_format == "arrow":
-                    data = dataframe_to_arrow_ipc(result).hex()  # Hex encode for JSON serialization
-                else:
-                    data = result.to_dict('records')  # Default to JSON
-                
-                final_time = datetime.now() - start_time
+            # Execute query using the persistent DuckDB connection
+            result = self.conn.execute(sql).fetchdf()
+            run_time = datetime.now() - start_time
 
-                print(f"SQL Execution Times - Validate: {validate_time}, Connect: {conn_establish_time}, Register: {register_time}, Run: {run_time}, Finalize: {final_time}")
+            # Format output based on configuration
+            if self.config.sql_output_format == "json":
+                data = result.to_dict('records')
+            elif self.config.sql_output_format == "csv":
+                data = result.to_csv(index=False)
+            elif self.config.sql_output_format == "arrow":
+                data = dataframe_to_arrow_ipc(result).hex()  # Hex encode for JSON serialization
+            else:
+                data = result.to_dict('records')  # Default to JSON
 
-                return {
-                    "success": True,
-                    "rows": len(result),
-                    "columns": list(result.columns),
-                    "data": data,
-                    "sql": sql,
-                    "format": self.config.sql_output_format,
-                    "available_tables": list(tables.keys())
-                }
-                
-            finally:
-                conn.close()
+            final_time = datetime.now() - start_time
+
+            print(f"SQL Execution Times - Validate: {validate_time}, Run: {run_time}, Finalize: {final_time}")
+
+            return {
+                "success": True,
+                "rows": len(result),
+                "columns": list(result.columns),
+                "data": data,
+                "sql": sql,
+                "format": self.config.sql_output_format,
+                "available_tables": available_tables
+            }
                 
         except Exception as e:
             self.logger.error(f"SQL execution failed: {e}")
