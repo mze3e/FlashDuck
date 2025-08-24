@@ -3,7 +3,7 @@ import json
 import time
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import duckdb
 import pandas as pd
@@ -61,6 +61,49 @@ class DuckDBCache:
         path = os.path.join(pending_dir, filename)
         df.to_parquet(path, index=False)
         return path
+
+    # ------------------------------------------------------------------
+    # Pending writes helpers
+    # ------------------------------------------------------------------
+    def list_pending_writes(self) -> List[str]:
+        """Return list of pending write Parquet files"""
+        pending_dir = self.config.pending_writes_dir
+        if not os.path.exists(pending_dir):
+            return []
+        return sorted(
+            [
+                os.path.join(pending_dir, f)
+                for f in os.listdir(pending_dir)
+                if f.endswith(".parquet")
+            ]
+        )
+
+    def purge_pending_writes(self) -> int:
+        """Delete all pending write files"""
+        files = self.list_pending_writes()
+        for path in files:
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+        return len(files)
+
+    def process_pending_writes(
+        self,
+        upload_fn: Optional[Callable[[str], None]] = None,
+        purge: bool = True,
+    ) -> List[str]:
+        """Optionally upload and purge pending write files"""
+        files = self.list_pending_writes()
+        for path in files:
+            if upload_fn:
+                try:
+                    upload_fn(path)
+                except Exception as e:
+                    self.logger.error(f"Upload failed for {path}: {e}")
+        if purge:
+            self.purge_pending_writes()
+        return files
 
     # ------------------------------------------------------------------
     # Snapshot operations
