@@ -44,9 +44,15 @@ class FlashDuckEngine:
         self._pending_thread: Optional[threading.Thread] = None
         self._pending_stop: Optional[threading.Event] = None
         self._running = False
-    
-    def start(self) -> None:
-        """Start all background services"""
+
+    def start(self, create_sample_data: bool = False) -> None:
+        """Start all background services.
+
+        Args:
+            create_sample_data: When ``True``, generate small sample files in the
+                configured database directory before monitoring begins. Useful
+                for demos or initial exploration when no data exists yet.
+        """
         if self._running:
             self.logger.warning("Engine already running")
             return
@@ -56,6 +62,18 @@ class FlashDuckEngine:
                 raise RuntimeError("Cannot access DuckDB cache")
 
             self.logger.info("Starting FlashDuck engine...")
+
+            if create_sample_data:
+                try:
+                    sample_records = [
+                        {"id": 1, "value": "sample-1"},
+                        {"id": 2, "value": "sample-2"},
+                    ]
+                    self.file_monitor.create_table_update(
+                        self.config.table_name, sample_records
+                    )
+                except Exception as e:
+                    self.logger.error(f"Failed to create sample data: {e}")
 
             # Start file monitoring
             self._monitor_thread = self.file_monitor.start_monitoring()
