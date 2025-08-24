@@ -105,21 +105,29 @@ class FlashDuckEngine:
     def get_status(self) -> Dict[str, Any]:
         """Get comprehensive engine status"""
         try:
+            pending = self.cache_manager.list_pending_writes()
             return {
                 "engine": {
                     "running": self._running,
                     "table_name": self.config.table_name,
-                    "db_root": self.config.db_root
+                    "db_root": self.config.db_root,
                 },
-                "cache": self.cache_manager.get_snapshot_info(),
+                "cache": {
+                    "connected": self.cache_manager.is_connected(),
+                    **self.cache_manager.get_snapshot_info(),
+                },
+                "pending_writes": {
+                    "count": len(pending),
+                    "files": pending,
+                },
                 "files": self.file_monitor.get_file_info(),
                 "parquet": self.parquet_writer.get_parquet_info(),
                 "config": {
                     "scan_interval_sec": self.config.scan_interval_sec,
                     "snapshot_format": self.config.snapshot_format,
                     "parquet_compression": self.config.parquet_compression,
-                    "schema_evolution": self.config.schema_evolution
-                }
+                    "schema_evolution": self.config.schema_evolution,
+                },
             }
         except Exception as e:
             self.logger.error(f"Failed to get status: {e}")

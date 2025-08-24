@@ -117,14 +117,20 @@ def status(ctx):
         click.echo(f"Engine Running: {'✅' if engine_status.get('running') else '❌'}")
         click.echo(f"Table Name: {engine_status.get('table_name', 'N/A')}")
         click.echo(f"DB Root: {engine_status.get('db_root', 'N/A')}")
-        
+
         # Cache status
         cache_status = status.get('cache', {})
         if cache_status:
+            click.echo(f"DuckDB Connected: {'✅' if cache_status.get('connected') else '❌'}")
             click.echo(f"Cache Rows: {cache_status.get('rows', 0):,}")
             click.echo(f"Cache Columns: {cache_status.get('columns', 0)}")
             click.echo(f"Cache Size: {cache_status.get('size_bytes', 0):,} bytes")
-        
+
+        # Pending writes status
+        pending_status = status.get('pending_writes', {})
+        if pending_status:
+            click.echo(f"Pending Writes: {pending_status.get('count', 0)}")
+
         # File status
         file_status = status.get('files', {})
         click.echo(f"Files Monitored: {file_status.get('file_count', 0)}")
