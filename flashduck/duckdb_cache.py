@@ -94,14 +94,6 @@ class DuckDBCache:
         rows = self.conn.execute("SELECT table_name FROM metadata").fetchall()
         return [r[0] for r in rows]
 
-    def get_all_tables(self) -> Dict[str, pd.DataFrame]:
-        tables: Dict[str, pd.DataFrame] = {}
-        for name in self.get_table_names():
-            df = self.load_table_snapshot(name)
-            if df is not None:
-                tables[name] = df
-        return tables
-
     def get_table_info(self, table_name: str) -> Dict[str, Any]:
         row = self.conn.execute(
             "SELECT row_count, columns, last_refresh FROM metadata WHERE table_name = ?",
