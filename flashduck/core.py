@@ -43,22 +43,18 @@ class FlashDuckEngine:
         self._parquet_thread: Optional[threading.Thread] = None
         self._running = False
     
-    def start(self, create_sample_data: bool = False) -> None:
+    def start(self) -> None:
         """Start all background services"""
         if self._running:
             self.logger.warning("Engine already running")
             return
-        
+
         try:
             if not self.cache_manager.is_connected():
                 raise RuntimeError("Cannot access DuckDB cache")
 
             self.logger.info("Starting FlashDuck engine...")
-            
-            # Create sample data if requested
-            if create_sample_data:
-                self.file_monitor.create_sample_files()
-            
+
             # Start file monitoring
             self._monitor_thread = self.file_monitor.start_monitoring()
             

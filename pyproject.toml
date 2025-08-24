@@ -11,4 +11,5 @@ dependencies = [
     "setuptools>=80.9.0",
     "streamlit>=1.48.1",
     "watchdog>=6.0.0",
+    "pyyaml>=6.0",
 ]

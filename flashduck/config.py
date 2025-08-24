@@ -1,10 +1,13 @@
-"""
-Configuration management for FlashDuck
-"""
+"""Configuration management for FlashDuck"""
 
 import os
-from typing import Optional
+from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
+
+try:
+    import yaml
+except Exception:  # pragma: no cover - optional dependency during import
+    yaml = None
 
 
 @dataclass
@@ -26,7 +29,8 @@ class Config:
     parquet_compression: str = "zstd"  # zstd, snappy, none
     
     # Primary key configuration for each table
-    table_primary_keys: dict = None  # Will be set to default in __post_init__
+    table_config_path: Optional[str] = None
+    table_primary_keys: Dict[str, Any] = None  # Loaded from YAML or default
     
     # Performance settings
     parquet_debounce_sec: Optional[int] = None
@@ -37,18 +41,39 @@ class Config:
     
     def __post_init__(self):
         """Set default values after initialization"""
-        if self.table_primary_keys is None:
-            self.table_primary_keys = {
-                "users": "id",
-                "products": "id",
-                "orders": "order_id",
-                "flights": "flight_unique_id"  # Will be auto-generated composite key
-            }
+        if self.table_config_path is None:
+            self.table_config_path = os.path.join(self.db_root, "tables.yaml")
+
+        self._load_table_primary_keys()
 
         if self.cache_db_path is None:
             self.cache_db_path = os.path.join(self.db_root, "cache.duckdb")
         if self.pending_writes_dir is None:
             self.pending_writes_dir = os.path.join(self.db_root, "pending_writes")
+
+    def _load_table_primary_keys(self) -> None:
+        """Load table primary keys from YAML config if available."""
+
+        if self.table_primary_keys is not None:  # explicitly provided at construction
+            return
+
+        self.table_primary_keys = {}
+
+        config_path = self.table_config_path
+        if config_path and yaml and os.path.exists(config_path):
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+                tables = data.get("tables", data)
+                for name, cfg in tables.items():
+                    if isinstance(cfg, dict):
+                        pk = cfg.get("primary_key") or cfg.get("primary_keys")
+                    else:
+                        pk = cfg
+                    self.table_primary_keys[name] = pk
+            except Exception:
+                # If loading fails, keep table_primary_keys as empty dict
+                pass
     
     @classmethod
     def from_env(cls) -> 'Config':
@@ -63,7 +88,8 @@ class Config:
             parquet_compression=os.getenv("PARQUET_COMPRESSION", "zstd"),
             parquet_debounce_sec=int(os.getenv("PARQUET_DEBOUNCE_SEC", "0")) or None,
             sql_output_format=os.getenv("SQL_OUTPUT_FORMAT", "json"),
-            schema_evolution=os.getenv("SCHEMA_EVOLUTION", "union")
+            schema_evolution=os.getenv("SCHEMA_EVOLUTION", "union"),
+            table_config_path=os.getenv("TABLE_CONFIG_PATH"),
         )
     
     def validate(self) -> None:

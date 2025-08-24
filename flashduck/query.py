@@ -142,9 +142,35 @@ class QueryEngine:
                 
                 # For each table, create a view with ranked deduplication
                 for table_name, files in table_files.items():
-                    # Get primary key for this table
-                    primary_key = self.config.table_primary_keys.get(table_name, 'id')
-                    print(f"Using primary key '{primary_key}' for table '{table_name}'")
+                    # Determine primary key for this table
+                    primary_key = self.config.table_primary_keys.get(table_name)
+                    if not primary_key:
+                        try:
+                            cols = [
+                                c[1]
+                                for c in conn.execute(
+                                    f"PRAGMA table_info(read_parquet('{files[0]}'))"
+                                ).fetchall()
+                            ]
+                            if 'id' in cols:
+                                primary_key = 'id'
+                            elif 'key' in cols:
+                                primary_key = 'key'
+                        except Exception:
+                            primary_key = None
+                    print(
+                        f"Using primary key '{primary_key}' for table '{table_name}'"
+                    )
+
+                    if not primary_key:
+                        file_pattern = f"[{','.join(repr(f) for f in files)}]"
+                        conn.execute(
+                            f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_parquet({file_pattern}, union_by_name=true)"
+                        )
+                        print(
+                            f"⚠️ No primary key for '{table_name}', created simple union view"
+                        )
+                        continue
                     
                     # Separate partition files from legacy files
                     partition_files = [f for f in files if "_partition_" in f]
