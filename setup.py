@@ -36,6 +36,7 @@ setup(
         "pandas>=1.3.0",
         "pyarrow>=8.0.0",
         "click>=8.0.0",
+        "pyyaml>=6.0",
     ],
     extras_require={
         "dev": [

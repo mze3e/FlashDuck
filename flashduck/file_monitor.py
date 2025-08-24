@@ -109,54 +109,71 @@ class FileMonitor:
             for table_name, file_paths in table_files.items():
                 try:
                     dataframes = []
-                    
+
                     # Load all partition files for this table
                     for file_path in file_paths:
                         df = self._load_data_file(file_path)
-                        
+
                         if df is not None and not df.empty:
                             # Add metadata columns
                             df['_source_file'] = file_path.name
                             if '_modified_time' not in df.columns:
                                 df['_modified_time'] = file_path.stat().st_mtime
-                            
-                            # For flights table, add unique identifier since FL_DATE is not unique
-                            if table_name == 'flights' and 'flight_unique_id' not in df.columns:
-                                # Create unique ID from row position and key columns
-                                df = df.reset_index(drop=True)
-                                df['flight_unique_id'] = df.index.astype(str) + '_' + df['FL_DATE'].astype(str) + '_' + df['DEP_TIME'].astype(str)
-                            
+
                             dataframes.append(df)
-                    
+
                     if dataframes:
                         # Combine all partitions for this table
                         combined_df = pd.concat(dataframes, ignore_index=True)
-                        
+
+                        # Determine primary key for this table
+                        primary_key = self._resolve_primary_key(table_name, combined_df)
+
                         # Apply primary key based deduplication using _modified_time ranking
-                        combined_df = self._extract_latest_records_from_partitions(combined_df, table_name)
-                        
-                        # Store table in cache
-                        self.cache_manager.store_table_snapshot(table_name, combined_df)
-                        
+                        combined_df = self._extract_latest_records_from_partitions(
+                            combined_df, table_name, primary_key
+                        )
+
+                        # Store ranked view/table in DuckDB cache
+                        self.cache_manager.store_ranked_table(table_name, combined_df, primary_key)
+
                         total_rows += len(combined_df)
                         tables_loaded += 1
-                        
+
                         self.logger.info(f"Loaded table '{table_name}': {len(combined_df)} rows")
                     
                 except Exception as e:
                     self.logger.error(f"Failed to load table '{table_name}': {e}")
                     continue
             
+            # Remove tables that no longer have files
+            current_tables = set(table_files.keys())
+            existing_tables = set(self.cache_manager.get_table_names())
+            for missing in existing_tables - current_tables:
+                self.logger.info(f"Removing table '{missing}' as source files are missing")
+                self.cache_manager.remove_table(missing)
+
             self.logger.info(f"Loaded {total_rows} total rows from {tables_loaded} tables")
-            
+
             # Notify callbacks
             self._notify_cache_update()
-            
+
             return True
             
         except Exception as e:
             self.logger.error(f"Failed to load and cache data: {e}")
             return False
+
+    def _resolve_primary_key(self, table_name: str, df: pd.DataFrame) -> Optional[Any]:
+        """Determine primary key for a table using config or common conventions."""
+        pk = self.config.table_primary_keys.get(table_name)
+        if pk:
+            return pk
+        if 'id' in df.columns:
+            return 'id'
+        if 'key' in df.columns:
+            return 'key'
+        return None
     
     def _load_data_file(self, file_path: Path) -> Optional[pd.DataFrame]:
         """Load data from a single file (JSON or Parquet)"""
@@ -183,45 +200,63 @@ class FileMonitor:
             self.logger.error(f"Failed to load file {file_path}: {e}")
             return None
     
-    def _extract_latest_records(self, df: pd.DataFrame, table_name: str) -> pd.DataFrame:
+    def _extract_latest_records(
+        self, df: pd.DataFrame, table_name: str, primary_key: Optional[Any]
+    ) -> pd.DataFrame:
         """Extract latest records based on primary key"""
         try:
-            primary_key = self.config.table_primary_keys.get(table_name)
-            if not primary_key or primary_key not in df.columns:
-                # No primary key defined or column doesn't exist, return as-is
+            pk_cols = (
+                list(primary_key)
+                if isinstance(primary_key, (list, tuple))
+                else ([primary_key] if primary_key else [])
+            )
+            if not pk_cols or any(col not in df.columns for col in pk_cols):
+                # No primary key defined or columns don't exist, return as-is
                 return df
-            
-            # Sort by modification time and keep latest record for each primary key
+
+            # Sort by modification time and keep latest record for each primary key combination
             df_sorted = df.sort_values('_modified_time', ascending=False)
-            latest_df = df_sorted.drop_duplicates(subset=[primary_key], keep='first')
-            
-            self.logger.debug(f"Table '{table_name}': {len(df)} total records, {len(latest_df)} latest records by key '{primary_key}'")
+            latest_df = df_sorted.drop_duplicates(subset=pk_cols, keep='first')
+
+            self.logger.debug(
+                f"Table '{table_name}': {len(df)} total records, {len(latest_df)} latest records by key '{primary_key}'"
+            )
             return latest_df
-            
+
         except Exception as e:
             self.logger.error(f"Failed to extract latest records for table '{table_name}': {e}")
             return df
-    
-    def _extract_latest_records_from_partitions(self, df: pd.DataFrame, table_name: str) -> pd.DataFrame:
+
+    def _extract_latest_records_from_partitions(
+        self, df: pd.DataFrame, table_name: str, primary_key: Optional[Any]
+    ) -> pd.DataFrame:
         """Extract latest records from partitioned files using primary key and _modified_time ranking"""
         try:
-            primary_key = self.config.table_primary_keys.get(table_name)
-            if not primary_key or primary_key not in df.columns:
-                # No primary key defined or column doesn't exist, return as-is
+            pk_cols = (
+                list(primary_key)
+                if isinstance(primary_key, (list, tuple))
+                else ([primary_key] if primary_key else [])
+            )
+            if not pk_cols or any(col not in df.columns for col in pk_cols):
+                # No primary key defined or columns don't exist, return as-is
                 return df
-            
+
             # Use ranking approach: sort by _modified_time descending, then drop duplicates to keep latest
             df_sorted = df.sort_values('_modified_time', ascending=False)
-            latest_df = df_sorted.drop_duplicates(subset=[primary_key], keep='first')
-            
+            latest_df = df_sorted.drop_duplicates(subset=pk_cols, keep='first')
+
             dropped_count = len(df) - len(latest_df)
             if dropped_count > 0:
-                self.logger.info(f"Deduplicated {dropped_count} records for table '{table_name}' using primary key '{primary_key}' ranked by _modified_time")
-            
+                self.logger.info(
+                    f"Deduplicated {dropped_count} records for table '{table_name}' using primary key '{primary_key}' ranked by _modified_time"
+                )
+
             return latest_df
-            
+
         except Exception as e:
-            self.logger.error(f"Failed to extract latest records from partitions for table '{table_name}': {e}")
+            self.logger.error(
+                f"Failed to extract latest records from partitions for table '{table_name}': {e}"
+            )
             return df
     
     def check_for_changes(self) -> bool:
@@ -312,76 +347,6 @@ class FileMonitor:
                 "directory": self.config.db_root,
                 "error": str(e)
             }
-    
-    def create_sample_files(self) -> None:
-        """Create sample data files for demo purposes"""
-        try:
-            db_path = Path(self.config.db_root)
-            db_path.mkdir(parents=True, exist_ok=True)
-            
-            # Sample data with proper types for Parquet
-            sample_data = [
-                {
-                    "table_name": "users",
-                    "data": [
-                        {"id": 1, "name": "Alice Johnson", "email": "alice@example.com", "age": 28, "city": "New York", "active": True},
-                        {"id": 2, "name": "Bob Smith", "email": "bob@example.com", "age": 34, "city": "San Francisco", "active": True},
-                        {"id": 3, "name": "Carol Davis", "email": "carol@example.com", "age": 29, "city": "Chicago", "active": False}
-                    ]
-                },
-                {
-                    "table_name": "products", 
-                    "data": [
-                        {"id": 101, "name": "Laptop", "price": 999.99, "category": "Electronics", "in_stock": True, "rating": 4.5},
-                        {"id": 102, "name": "Mouse", "price": 29.99, "category": "Electronics", "in_stock": True, "rating": 4.2},
-                        {"id": 103, "name": "Keyboard", "price": 79.99, "category": "Electronics", "in_stock": False, "rating": 4.8}
-                    ]
-                },
-                {
-                    "table_name": "orders",
-                    "data": [
-                        {"order_id": 1001, "user_id": 1, "product_id": 101, "quantity": 1, "total": 999.99, "date": "2025-01-15", "status": "completed"},
-                        {"order_id": 1002, "user_id": 2, "product_id": 102, "quantity": 2, "total": 59.98, "date": "2025-01-16", "status": "pending"},
-                        {"order_id": 1003, "user_id": 3, "product_id": 103, "quantity": 1, "total": 79.99, "date": "2025-01-17", "status": "shipped"}
-                    ]
-                }
-            ]
-            
-            for sample in sample_data:
-                df = pd.DataFrame(sample["data"])
-                
-                # Ensure proper data types
-                if sample["table_name"] == "users":
-                    df["id"] = df["id"].astype("int32")
-                    df["age"] = df["age"].astype("int32")
-                    df["active"] = df["active"].astype("bool")
-                elif sample["table_name"] == "products":
-                    df["id"] = df["id"].astype("int32")
-                    df["price"] = df["price"].astype("float64")
-                    df["in_stock"] = df["in_stock"].astype("bool")
-                    df["rating"] = df["rating"].astype("float32")
-                elif sample["table_name"] == "orders":
-                    df["order_id"] = df["order_id"].astype("int32")
-                    df["user_id"] = df["user_id"].astype("int32")
-                    df["product_id"] = df["product_id"].astype("int32")
-                    df["quantity"] = df["quantity"].astype("int32")
-                    df["total"] = df["total"].astype("float64")
-                    df["date"] = pd.to_datetime(df["date"])
-                
-                # Write as Parquet or JSON based on configuration
-                if self.config.file_format == "parquet":
-                    file_path = db_path / f"{sample['table_name']}.parquet"
-                    df.to_parquet(file_path, compression=self.config.parquet_compression, index=False)
-                else:
-                    file_path = db_path / f"{sample['table_name']}.json"
-                    import json
-                    with open(file_path, 'w', encoding='utf-8') as f:
-                        json.dump(sample["data"], f, indent=2)
-                
-                self.logger.info(f"Created sample file: {file_path}")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to create sample files: {e}")
     
     def create_table_update(self, table_name: str, records: List[Dict[str, Any]]) -> bool:
         """Create/update table with new records using partitioned files"""

@@ -40,16 +40,28 @@ def get_engine():
     if st.session_state.engine is None:
         config = Config.from_env()
         st.session_state.engine = FlashDuckEngine(config)
-        
+
         # Start engine with sample data if not running
         if not st.session_state.engine.is_running():
             try:
-                st.session_state.engine.start(create_sample_data=True)
+                st.session_state.engine.start()
             except Exception as e:
                 st.error(f"Failed to start FlashDuck engine: {e}")
                 return None
-    
+
     return st.session_state.engine
+
+
+def resolve_primary_key(engine, table_name: str, df: pd.DataFrame) -> str:
+    """Resolve primary key using config or common column names."""
+    pk = engine.config.table_primary_keys.get(table_name)
+    if pk:
+        return pk
+    if 'id' in df.columns:
+        return 'id'
+    if 'key' in df.columns:
+        return 'key'
+    return ''
 
 
 def render_header():
@@ -646,10 +658,12 @@ def render_write_operations():
                 use_container_width=True,
                 key=f"data_editor_{selected_table}"
             )
-            
+
             # Show primary key info
-            primary_key = engine.config.table_primary_keys.get(selected_table, "id")
-            st.info(f"🔑 Primary key: **{primary_key}** (duplicates will be deduplicated automatically)")
+            primary_key = resolve_primary_key(engine, selected_table, current_df)
+            st.info(
+                f"🔑 Primary key: **{primary_key or 'N/A'}** (duplicates will be deduplicated automatically)"
+            )
             
             # Save changes button
             col1, col2, col3 = st.columns([2, 1, 1])
@@ -668,7 +682,9 @@ def render_write_operations():
                                 original_clean = original_df.drop(columns=['_source_file', '_modified_time'], errors='ignore')
                                 
                                 # Find only the changed/new rows
-                                primary_key = engine.config.table_primary_keys.get(selected_table, "id")
+                                primary_key = resolve_primary_key(
+                                    engine, selected_table, edited_df
+                                )
                                 
                                 if primary_key in edited_df.columns and primary_key in original_clean.columns:
                                     # Create comparison sets for finding differences
@@ -981,8 +997,8 @@ def render_parquet_files():
                     with col3:
                         st.metric("File Size", f"{selected_file_info.get('size_bytes', 0) / 1024:.1f} KB")
                     with col4:
-                        primary_key = engine.config.table_primary_keys.get(table_name, "N/A")
-                        st.metric("Primary Key", primary_key)
+                        primary_key = resolve_primary_key(engine, table_name, preview_df)
+                        st.metric("Primary Key", primary_key or "N/A")
                     
                     # Data preview
                     st.write(f"**Data Preview (first 20 rows):**")
