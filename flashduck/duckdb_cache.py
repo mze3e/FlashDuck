@@ -12,14 +12,12 @@ from .config import Config
 
 
 class DuckDBCache:
-    """Persistent DuckDB-backed cache for table snapshots and change tracking."""
+    """In-memory DuckDB-backed cache for table snapshots and change tracking."""
 
-    def __init__(self, config: Config, cache_db_path: Optional[str] = None):
+    def __init__(self, config: Config):
         self.config = config
-        self.cache_db_path = cache_db_path or config.cache_db_path
-        os.makedirs(os.path.dirname(self.cache_db_path), exist_ok=True)
-
-        self.conn = duckdb.connect(self.cache_db_path)
+        # Use an in-memory DuckDB instance instead of a file-based database
+        self.conn = duckdb.connect()
         self.logger = logging.getLogger(__name__)
         self._init_metadata_table()
 

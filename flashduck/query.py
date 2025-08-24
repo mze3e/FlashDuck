@@ -20,12 +20,10 @@ class QueryEngine:
         self.config = config
         self.cache_manager = cache_manager
         self.logger = logging.getLogger(__name__)
-        # Use a connection with the same configuration as the cache manager
-        # DuckDB does not allow mixing read-only and read-write connections to
-        # the same database file. Since the cache manager already holds a
-        # read-write connection, we open another standard connection here and
-        # rely on `validate_sql_readonly` to ensure queries remain read-only.
-        self.conn = duckdb.connect(self.cache_manager.cache_db_path)
+        # Share the in-memory DuckDB connection from the cache manager. All
+        # queries are validated to be read-only, so this shared connection is
+        # safe and avoids creating any local database files.
+        self.conn = self.cache_manager.conn
     
     def execute_sql(self, sql: str) -> Dict[str, Any]:
         """Execute SQL query and return results"""
@@ -45,7 +43,7 @@ class QueryEngine:
                     "data": []
                 }
 
-            # Execute query using the persistent DuckDB connection
+            # Execute query using the shared DuckDB connection
             result = self.conn.execute(sql).fetchdf()
             run_time = datetime.now() - start_time
 
