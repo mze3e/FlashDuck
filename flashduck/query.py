@@ -5,6 +5,7 @@ DuckDB query engine for FlashDuck
 from datetime import datetime
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional, Union
 import duckdb
 import pandas as pd
@@ -44,10 +45,11 @@ class QueryEngine:
             conn = duckdb.connect()
             conn_establish_time = datetime.now() - start_time
             try:
-                # Register all tables in DuckDB
+                # Register tables referenced in the SQL query using a case-insensitive match
+                sql_lower = sql.lower()
                 for table_name, df in tables.items():
-                    if table_name in sql:
-                        # Only register tables that are referenced in the SQL query
+                    pattern = rf"\b{re.escape(table_name.lower())}\b"
+                    if re.search(pattern, sql_lower):
                         conn.register(table_name, df)
                 register_time = datetime.now() - start_time
                 # Execute query
