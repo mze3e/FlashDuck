@@ -350,7 +350,10 @@ class CacheManager:
     def clear_cache(self) -> None:
         """Clear all cached data"""
         try:
-            self.redis_client.delete(self.snapshot_key, self.metadata_key)
+            for table_name in self.get_table_names():
+                snapshot_key, metadata_key, stream_key = self._get_table_keys(table_name)
+                self.redis_client.delete(snapshot_key, metadata_key, stream_key)
+            self.redis_client.delete(self.tables_list_key)
             self.logger.info("Cache cleared")
         except Exception as e:
             self.logger.error(f"Failed to clear cache: {e}")
