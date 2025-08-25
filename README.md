@@ -19,6 +19,12 @@ Flexible integration: Use it as a cache, an analytics engine, or both. Ingest fi
 
 FlashDuck is designed for developers and analysts who want the simplicity of DuckDB with automatic synchronization—without the overhead of a full data warehouse or lakehouse.
 
+## Requirements
+
+- Python 3.8 or later
+- DuckDB 1.0 or later
+- Pandas 2.0 or later
+
 ## 🚀 Features
 
 - **High-Performance Querying**: Execute SQL queries on cached data using DuckDB
