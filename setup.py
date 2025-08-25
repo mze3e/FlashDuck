@@ -32,8 +32,8 @@ setup(
     ],
     python_requires=">=3.8",
     install_requires=[
-        "duckdb>=0.8.0",
-        "pandas>=1.3.0",
+        "duckdb>=1.0,<1.1",
+        "pandas>=2.0,<2.1",
         "pyarrow>=8.0.0",
         "click>=8.0.0",
         "pyyaml>=6.0",
