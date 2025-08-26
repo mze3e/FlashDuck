@@ -37,6 +37,7 @@ setup(
         "pyarrow>=8.0.0",
         "click>=8.0.0",
         "pyyaml>=6.0",
+        "boto3>=1.28.0",
     ],
     extras_require={
         "dev": [
