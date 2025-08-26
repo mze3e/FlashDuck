@@ -13,6 +13,8 @@ from .azure_sync import (
     download_loop,
     delete_loop,
 )
+from .gcs_sync import GCSSyncManager
+from .s3_sync import S3SyncManager
 
 __version__ = "0.1.0"
 __author__ = "FlashDuck Contributors"
@@ -30,4 +32,6 @@ __all__ = [
     "upload_loop",
     "download_loop",
     "delete_loop",
+    "GCSSyncManager",
+    "S3SyncManager",
 ]

@@ -38,6 +38,8 @@ setup(
         "click>=8.0.0",
         "pyyaml>=6.0",
         "azure-storage-blob>=12.0.0",
+        "google-cloud-storage>=2.0.0",
+        "boto3>=1.28.0",
     ],
     extras_require={
         "dev": [
