@@ -37,6 +37,10 @@ class Config:
     
     # Schema evolution
     schema_evolution: str = "union"  # union, strict
+
+    # Azure Blob Storage settings
+    azure_connection_string: Optional[str] = None
+    azure_container: Optional[str] = None
     
     def __post_init__(self):
         """Set default values after initialization"""
@@ -86,6 +90,8 @@ class Config:
             sql_output_format=os.getenv("SQL_OUTPUT_FORMAT", "json"),
             schema_evolution=os.getenv("SCHEMA_EVOLUTION", "union"),
             table_config_path=os.getenv("TABLE_CONFIG_PATH"),
+            azure_connection_string=os.getenv("AZURE_CONNECTION_STRING"),
+            azure_container=os.getenv("AZURE_CONTAINER"),
         )
     
     def validate(self) -> None:
