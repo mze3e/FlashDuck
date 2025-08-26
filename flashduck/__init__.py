@@ -9,6 +9,7 @@ from .config import Config
 from .sync_base import SyncBase
 from .smb_sync_manager import SMBSyncManager
 from .gcs_sync import GCSSyncManager
+from .s3_sync import S3SyncManager
 
 __version__ = "0.1.0"
 __author__ = "FlashDuck Contributors"
@@ -24,4 +25,5 @@ __all__ = [
     "SyncBase",
     "SMBSyncManager",
     "GCSSyncManager",
+    "S3SyncManager",
 ]
