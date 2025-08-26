@@ -22,7 +22,7 @@ FlashDuck is designed for developers and analysts who want the simplicity of Duc
 ## Requirements
 
 - Python 3.8 or later
-- DuckDB 1.0 or later
+- DuckDB 1.0.x (pinned below 1.1 for Python 3.8 compatibility)
 - Pandas 2.0 or later
 - PyArrow 8.0 or later
 
