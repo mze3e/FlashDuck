@@ -37,6 +37,13 @@ class Config:
     
     # Schema evolution
     schema_evolution: str = "union"  # union, strict
+
+    # S3 settings
+    s3_bucket: Optional[str] = None
+    s3_region: Optional[str] = None
+    aws_access_key_id: Optional[str] = None
+    aws_secret_access_key: Optional[str] = None
+    aws_session_token: Optional[str] = None
     
     def __post_init__(self):
         """Set default values after initialization"""
@@ -86,6 +93,11 @@ class Config:
             sql_output_format=os.getenv("SQL_OUTPUT_FORMAT", "json"),
             schema_evolution=os.getenv("SCHEMA_EVOLUTION", "union"),
             table_config_path=os.getenv("TABLE_CONFIG_PATH"),
+            s3_bucket=os.getenv("S3_BUCKET"),
+            s3_region=os.getenv("S3_REGION"),
+            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+            aws_session_token=os.getenv("AWS_SESSION_TOKEN"),
         )
     
     def validate(self) -> None:
@@ -104,3 +116,7 @@ class Config:
 
         if not self.pending_writes_dir:
             raise ValueError("pending_writes_dir must be set")
+
+        if self.s3_bucket and not self.s3_region:
+            # region can be optional; but if not provided, boto3 chooses default.
+            pass
