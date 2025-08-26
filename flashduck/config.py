@@ -38,6 +38,9 @@ class Config:
     # Schema evolution
     schema_evolution: str = "union"  # union, strict
 
+    # Cloud storage settings
+    gcs_service_account: Optional[str] = None  # Path to service account JSON
+    gcs_bucket: Optional[str] = None  # Target Google Cloud Storage bucket
     # S3 settings
     s3_bucket: Optional[str] = None
     s3_region: Optional[str] = None
@@ -92,6 +95,8 @@ class Config:
             parquet_debounce_sec=int(os.getenv("PARQUET_DEBOUNCE_SEC", "0")) or None,
             sql_output_format=os.getenv("SQL_OUTPUT_FORMAT", "json"),
             schema_evolution=os.getenv("SCHEMA_EVOLUTION", "union"),
+            gcs_service_account=os.getenv("GCS_SERVICE_ACCOUNT"),
+            gcs_bucket=os.getenv("GCS_BUCKET"),
             table_config_path=os.getenv("TABLE_CONFIG_PATH"),
             s3_bucket=os.getenv("S3_BUCKET"),
             s3_region=os.getenv("S3_REGION"),

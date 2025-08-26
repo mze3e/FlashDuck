@@ -8,6 +8,7 @@ from .file_monitor import FileMonitor
 from .config import Config
 from .sync_base import SyncBase
 from .smb_sync_manager import SMBSyncManager
+from .gcs_sync import GCSSyncManager
 from .s3_sync import S3SyncManager
 
 __version__ = "0.1.0"
@@ -23,5 +24,6 @@ __all__ = [
     "Config",
     "SyncBase",
     "SMBSyncManager",
+    "GCSSyncManager",
     "S3SyncManager",
 ]
