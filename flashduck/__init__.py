@@ -8,6 +8,11 @@ from .file_monitor import FileMonitor
 from .config import Config
 from .sync_base import SyncBase
 from .smb_sync_manager import SMBSyncManager
+from .azure_sync import (
+    upload_loop,
+    download_loop,
+    delete_loop,
+)
 from .gcs_sync import GCSSyncManager
 from .s3_sync import S3SyncManager
 
@@ -24,6 +29,9 @@ __all__ = [
     "Config",
     "SyncBase",
     "SMBSyncManager",
+    "upload_loop",
+    "download_loop",
+    "delete_loop",
     "GCSSyncManager",
     "S3SyncManager",
 ]

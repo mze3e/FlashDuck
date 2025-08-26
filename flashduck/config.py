@@ -38,6 +38,9 @@ class Config:
     # Schema evolution
     schema_evolution: str = "union"  # union, strict
 
+    # Azure Blob Storage settings
+    azure_connection_string: Optional[str] = None
+    azure_container: Optional[str] = None
     # Cloud storage settings
     gcs_service_account: Optional[str] = None  # Path to service account JSON
     gcs_bucket: Optional[str] = None  # Target Google Cloud Storage bucket
@@ -98,6 +101,8 @@ class Config:
             gcs_service_account=os.getenv("GCS_SERVICE_ACCOUNT"),
             gcs_bucket=os.getenv("GCS_BUCKET"),
             table_config_path=os.getenv("TABLE_CONFIG_PATH"),
+            azure_connection_string=os.getenv("AZURE_CONNECTION_STRING"),
+            azure_container=os.getenv("AZURE_CONTAINER"),
             s3_bucket=os.getenv("S3_BUCKET"),
             s3_region=os.getenv("S3_REGION"),
             aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
