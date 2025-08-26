@@ -15,6 +15,7 @@ from .azure_sync import (
 )
 from .gcs_sync import GCSSyncManager
 from .s3_sync import S3SyncManager
+from .dropbox_sync import DropboxSyncManager
 
 __version__ = "0.1.0"
 __author__ = "FlashDuck Contributors"
@@ -34,4 +35,5 @@ __all__ = [
     "delete_loop",
     "GCSSyncManager",
     "S3SyncManager",
+    "DropboxSyncManager",
 ]

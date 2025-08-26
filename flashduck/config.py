@@ -50,6 +50,10 @@ class Config:
     aws_access_key_id: Optional[str] = None
     aws_secret_access_key: Optional[str] = None
     aws_session_token: Optional[str] = None
+
+    # Dropbox settings
+    dropbox_token: Optional[str] = None
+    dropbox_root_path: Optional[str] = None
     
     def __post_init__(self):
         """Set default values after initialization"""
@@ -108,6 +112,8 @@ class Config:
             aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
             aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
             aws_session_token=os.getenv("AWS_SESSION_TOKEN"),
+            dropbox_token=os.getenv("DROPBOX_TOKEN"),
+            dropbox_root_path=os.getenv("DROPBOX_ROOT_PATH"),
         )
     
     def validate(self) -> None:
