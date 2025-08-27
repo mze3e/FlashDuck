@@ -7,6 +7,7 @@ from .parquet_writer import ParquetWriter
 from .file_monitor import FileMonitor
 from .config import Config
 from .sync_base import SyncBase
+from .local_drive_sync import LocalDriveSyncManager  # Default sync provider
 from .smb_sync_manager import SMBSyncManager
 from .azure_sync import (
     upload_loop,
@@ -30,6 +31,7 @@ __all__ = [
     "FileMonitor",
     "Config",
     "SyncBase",
+    "LocalDriveSyncManager",
     "SMBSyncManager",
     "upload_loop",
     "download_loop",
